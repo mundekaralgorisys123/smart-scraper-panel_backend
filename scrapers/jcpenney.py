@@ -10,19 +10,18 @@ from typing import Dict, Any, List
 import requests
 from urllib.parse import urlparse
 from openpyxl import Workbook
-from database.db_inseartin import insert_into_db, update_product_count
-from dotenv import load_dotenv
+from database_quey.db_inseartin import insert_into_db, update_product_count
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-load_dotenv(override=True)
 
 IMAGE_SAVE_PATH = os.getenv("IMAGE_SAVE_PATH")
 EXCEL_DATA_PATH = os.getenv("EXCEL_DATA_PATH")
 
 
-class JaredParser:
-    """Parser for Jared product pages with database and Excel functionality"""
+class JCPenneyParser:
+    """Parser for JCPenney product pages with database and Excel functionality"""
     
     def __init__(self, excel_data_path=EXCEL_DATA_PATH, image_save_path=IMAGE_SAVE_PATH):
         self.excel_data_path = excel_data_path
@@ -40,7 +39,7 @@ class JaredParser:
         Returns: JSON response compatible with your requirements
         """
         try:
-            print("=================== Starting Jared Parser ==================")
+            print("=================== Starting JCPenney Parser ==================")
             print(f"Processing {len(products_data)} product entries")
             
             # Extract HTML content
@@ -57,11 +56,11 @@ class JaredParser:
             current_time = datetime.now().time()
             
             # Create image folder for this session
-            image_folder = os.path.join(self.image_save_path, f"jared_{timestamp}")
+            image_folder = os.path.join(self.image_save_path, f"jcpenney_{timestamp}")
             os.makedirs(image_folder, exist_ok=True)
             
             # Create Excel file
-            excel_filename = f"jared_scraped_products_{timestamp}.xlsx"
+            excel_filename = f"jcpenney_scraped_products_{timestamp}.xlsx"
             excel_path = os.path.join(self.excel_data_path, excel_filename)
             
             # Process products
@@ -71,14 +70,15 @@ class JaredParser:
             # Create Excel workbook
             wb = Workbook()
             sheet = wb.active
-            sheet.title = "Jared Products"
+            sheet.title = "JCPenney Products"
             
             # Add headers
             headers = [
                 'Unique ID', 'Current Date', 'Page Title', 'Product Name', 
                 'Image Path', 'Gold Type', 'Price', 'Diamond Weight', 
                 'Additional Info', 'Scrape Time', 'Image URL', 'Product Link',
-                'Session ID', 'Page URL'
+                'Session ID', 'Page URL', 'Original Price', 'Discount Code',
+                'Rating', 'Colors', 'Promotion Text'
             ]
             sheet.append(headers)
             
@@ -101,17 +101,8 @@ class JaredParser:
                     if image_path != "N/A":
                         successful_downloads += 1
                     
-                    # Prepare additional info
-                    badges = parsed_data.get('badges', [])
-                    promotions = parsed_data.get('promotions', '')
-                    additional_info_parts = []
-                    
-                    if badges:
-                        additional_info_parts.extend(badges)
-                    if promotions and promotions != "N/A":
-                        additional_info_parts.append(promotions)
-                    
-                    additional_info = " | ".join(additional_info_parts) if additional_info_parts else "N/A"
+                    # Prepare additional info with all the new fields
+                    additional_info = self._build_additional_info(parsed_data)
                     
                     # Create database record
                     db_record = {
@@ -143,7 +134,12 @@ class JaredParser:
                         image_url,
                         parsed_data.get('link', 'N/A'),
                         session_id,
-                        page_url
+                        page_url,
+                        parsed_data.get('original_price', 'N/A'),
+                        parsed_data.get('discount_code', 'N/A'),
+                        parsed_data.get('rating', 'N/A'),
+                        parsed_data.get('colors', 'N/A'),
+                        parsed_data.get('promotion_text', 'N/A')
                     ])
                     
                     print(f"Processed product {i+1}: {product_name}")
@@ -172,7 +168,7 @@ class JaredParser:
                 'total_processed': len(database_records),
                 'images_downloaded': successful_downloads,
                 'failed': len(individual_products) - len(database_records),
-                'website_type': 'jared',
+                'website_type': 'jcpenney',
                 'base64_file': base64_file,
                 'file_path': excel_path
             }
@@ -191,27 +187,70 @@ class JaredParser:
         return {
             'product_name': self._extract_product_name(soup),
             'price': self._extract_price(soup),
+            'original_price': self._extract_original_price(soup),
             'image_url': self._extract_image(soup),
             'link': self._extract_link(soup),
             'diamond_weight': self._extract_diamond_weight(soup),
             'gold_type': self._extract_gold_type(soup),
             'badges': self._extract_badges(soup),
-            'promotions': self._extract_promotions(soup)
+            'promotions': self._extract_promotions(soup),
+            'discount_code': self._extract_discount_code(soup),
+            'rating': self._extract_rating(soup),
+            'colors': self._extract_colors(soup),
+            'promotion_text': self._extract_promotion_text(soup)
         }
     
+    def _build_additional_info(self, parsed_data: Dict[str, Any]) -> str:
+        """Build additional info string from all available product data"""
+        additional_info_parts = []
+        
+        # Add badges
+        badges = parsed_data.get('badges', [])
+        if badges:
+            additional_info_parts.extend(badges)
+        
+        # Add promotions
+        promotions = parsed_data.get('promotions', '')
+        if promotions and promotions != "N/A":
+            additional_info_parts.append(promotions)
+        
+        # Add rating
+        rating = parsed_data.get('rating', '')
+        if rating and rating != "N/A":
+            additional_info_parts.append(f"Rating: {rating}")
+        
+        # Add colors
+        colors = parsed_data.get('colors', '')
+        if colors and colors != "N/A":
+            additional_info_parts.append(f"Colors: {colors}")
+        
+        # Add discount code
+        discount_code = parsed_data.get('discount_code', '')
+        if discount_code and discount_code != "N/A":
+            additional_info_parts.append(f"Coupon: {discount_code}")
+        
+        # Add promotion text
+        promotion_text = parsed_data.get('promotion_text', '')
+        if promotion_text and promotion_text != "N/A":
+            additional_info_parts.append(promotion_text)
+        
+        return " | ".join(additional_info_parts) if additional_info_parts else "N/A"
+    
     def extract_individual_products_from_html(self, html_content: str) -> List[str]:
-        """Extract individual product HTML blocks from Jared HTML"""
+        """Extract individual product HTML blocks from JCPenney HTML"""
         if not html_content:
             return []
         
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # Multiple ways to find Jared products
+        # JCPenney specific product selectors
         product_selectors = [
-            'div.product-grid_tile',  # Main product container
-            'div.product-item',       # Product item
-            'app-product-grid-item-akron',  # Angular component
-            'div[data-product-id]'    # Products with data attributes
+            'li[data-automation-id^="list-item-"]',  # List items with automation IDs
+            '.ProductCard-productCardPane',  # Product card container
+            '.Rkqsa.G85iV.yJy1z',  # Product wrapper
+            'li.pAB7b.D2LxB.gQ4Qt',  # Product list item
+            '[data-ppid]',  # Elements with product ID
+            '.YOMPJ.KUgp0.tJYbI'  # Product card
         ]
         
         individual_products = []
@@ -223,34 +262,45 @@ class JaredParser:
             if individual_products:
                 break  # Stop if we found products with this selector
         
-        print(f"Found {len(individual_products)} product tiles in Jared HTML")
+        print(f"Found {len(individual_products)} product tiles in JCPenney HTML")
         return individual_products
     
     def _extract_product_name(self, soup) -> str:
-        """Extract product name from Jared product tile"""
-        # Try multiple selectors for product name
+        """Extract product name from JCPenney product tile"""
+        # JCPenney specific name selectors
         name_selectors = [
-            'h2.name a',  # Product name in header
-            '.product-tile-description a',  # Product description
-            'a[itemprop="url"]',  # Item prop URL
-            '.js-product-name-details a'  # JavaScript product name
+            'a[data-automation-id="product-title"]',  # Product title with automation ID
+            '.-zrMP.FMQQD.t689a',  # Product title class
+            '.product-title a',  # Alternative product title
+            'h2 a',  # Header link
+            '[title] a'  # Any link with title
         ]
         
         for selector in name_selectors:
             name_element = soup.select_one(selector)
-            if name_element and name_element.get_text(strip=True):
-                return self.clean_text(name_element.get_text())
+            if name_element:
+                name_text = name_element.get_text(strip=True)
+                if name_text:
+                    return self.clean_text(name_text)
+        
+        # Fallback: look for any anchor with substantial text
+        anchors = soup.find_all('a', string=re.compile(r'.{10,}'))
+        for anchor in anchors:
+            text = anchor.get_text(strip=True)
+            if len(text) > 10 and not any(word in text.lower() for word in ['sort', 'filter', 'page']):
+                return self.clean_text(text)
         
         return "N/A"
     
     def _extract_price(self, soup) -> str:
-        """Extract price information from Jared product"""
-        # Current price selectors
+        """Extract current price from JCPenney product"""
+        # Current price selectors for JCPenney
         price_selectors = [
-            '.price .plp-align',  # Current price
-            '.product-prices .price',  # Price container
-            '.pj-price',  # Price wrapper
-            '[data-di-id*="price"]'  # Data attribute
+            '.DXCCO._2Bk5a.wrap',  # Current price span
+            '.sales-price .price',  # Sales price
+            '[data-automation-id="product-price"] .price',  # Price in product price container
+            '.current-price',  # Current price
+            '.gallery .price'  # Gallery price
         ]
         
         for selector in price_selectors:
@@ -261,22 +311,43 @@ class JaredParser:
                 if extracted_price != "N/A":
                     return extracted_price
         
-        # Look for price in any text
+        # Look for price patterns in the entire product HTML
         price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
         if price_match:
             return price_match.group(0)
         
         return "N/A"
     
+    def _extract_original_price(self, soup) -> str:
+        """Extract original price (strikethrough) from JCPenney product"""
+        # Original price selectors
+        original_price_selectors = [
+            'strike',  # Strikethrough price
+            '.original-price',  # Original price class
+            '.price-old-sale',  # Old sale price
+            '._8uOFg strike'  # Strike in price container
+        ]
+        
+        for selector in original_price_selectors:
+            price_element = soup.select_one(selector)
+            if price_element:
+                price_text = price_element.get_text(strip=True)
+                extracted_price = self.extract_price_value(price_text)
+                if extracted_price != "N/A":
+                    return extracted_price
+        
+        return "N/A"
+    
     def _extract_image(self, soup) -> str:
-        """Extract product image URL from Jared product"""
-        # Image selectors
+        """Extract product image URL from JCPenney product"""
+        # JCPenney image selectors
         img_selectors = [
-            'img[itemprop="image"]',  # Schema image
-            '.main-thumb img',  # Main thumbnail
-            'app-product-primary-image img',  # Primary image component
-            'img.plpimage',  # PLP image
-            'img[src*="productimages"]'  # Product images
+            'img[loading="lazy"]',  # Lazy loaded images
+            'img.visible.KVxnG',  # Visible product image
+            '.product-image img',  # Product image
+            'img[src*="scene7.com"]',  # JCPenney scene7 images
+            'img[alt*="product"]',  # Product images with alt text
+            '.main-image img'  # Main image
         ]
         
         for selector in img_selectors:
@@ -288,13 +359,14 @@ class JaredParser:
         return "N/A"
     
     def _extract_link(self, soup) -> str:
-        """Extract product link from Jared product"""
-        # Link selectors
+        """Extract product link from JCPenney product"""
+        # Link selectors for JCPenney
         link_selectors = [
-            'h2.name a',  # Name link
-            '.main-thumb',  # Thumbnail link
-            'a[itemprop="url"]',  # Schema URL
-            '.product-tile-description a'  # Description link
+            'a[data-automation-id="product-title"]',  # Product title link
+            'a.mChv9.KUgp0',  # Product card link
+            'a[href*="/p/"]',  # Links with product path
+            '.product-link a',  # Product link
+            'a[title]'  # Links with title
         ]
         
         for selector in link_selectors:
@@ -316,15 +388,16 @@ class JaredParser:
         return self.extract_gold_type_value(product_name)
     
     def _extract_badges(self, soup) -> list:
-        """Extract badge information from Jared product"""
+        """Extract badge information from JCPenney product"""
         badges = []
         
-        # Badge selectors
+        # JCPenney badge selectors
         badge_selectors = [
-            '.product-tag',  # Product tags
-            '.secondary-badge .tag-container span',  # Secondary badges
-            '.badge-container span',  # Badge container
-            '.groupby-tablet-product-tags'  # Group badges
+            '.product-badge',  # Product badges
+            '.badge-container',  # Badge container
+            '.promo-badge',  # Promotion badge
+            '.sale-badge',  # Sale badge
+            '[class*="badge"]'  # Any badge class
         ]
         
         for selector in badge_selectors:
@@ -337,30 +410,113 @@ class JaredParser:
         return badges
     
     def _extract_promotions(self, soup) -> str:
-        """Extract promotion text from Jared product"""
-        # Promotion selectors
+        """Extract promotion text from JCPenney product"""
+        # Promotion text selectors
         promo_selectors = [
-            '.tag-text',  # Discount tags
-            '.amor-tags .tag-text',  # Amor tags
-            '.discount-percentage',  # Discount percentage
-            '[class*="promotion"]'  # Any promotion class
+            '.H-M5g.yxA5D.newFPACCouponText',  # "with code" text
+            '.promo-text',  # Promotion text
+            '.discount-text',  # Discount text
+            '.sale-text',  # Sale text
+            '._8uOFg'
         ]
         
         for selector in promo_selectors:
-            promo_elements = soup.select(selector)
-            promo_texts = []
-            for promo in promo_elements:
-                promo_text = self.clean_text(promo.get_text())
-                if promo_text and "off" in promo_text.lower():
-                    promo_texts.append(promo_text)
-            
-            if promo_texts:
-                return " | ".join(promo_texts)
+            promo_element = soup.select_one(selector)
+            if promo_element:
+                promo_text = promo_element.get_text(strip=True)
+                if promo_text:
+                    return promo_text
+        
+        return "N/A"
+    
+    def _extract_discount_code(self, soup) -> str:
+        """Extract discount code from JCPenney product"""
+
+        # Case 1: Standard fpacCoupon input
+        discount_input = soup.find('input', class_='fpacCoupon')
+        if discount_input and discount_input.get('value'):
+            return discount_input['value'].strip()
+
+        # Case 2: Discount code shown in text like: "Use code SAVE20"
+        possible_text_selectors = [
+            '.H-M5g.yxA5D.newFPACCouponText',   # JCP code block
+            '.promo-text',
+            '.discount-code',
+            '.coupon-text'
+        ]
+
+        for selector in possible_text_selectors:
+            el = soup.select_one(selector)
+            if el:
+                text = el.get_text(" ", strip=True)
+                # Look for patterns like SAVE20, EXTRA15, etc.
+                match = re.search(r'\b[A-Z0-9]{4,10}\b', text)
+                if match:
+                    return match.group(0)
+
+        return "N/A"
+
+    
+    def _extract_rating(self, soup) -> str:
+        """Extract product rating from JCPenney product"""
+        # Rating selectors
+        rating_selectors = [
+            'div[data-automation-id="productCard-automation-rating"]',  # Rating container
+            '.Meqrf.PI6hD.SZ2pn',  # Rating count
+            '.product-rating',  # Product rating
+            '.rating-count'  # Rating count
+        ]
+        
+        for selector in rating_selectors:
+            rating_element = soup.select_one(selector)
+            if rating_element:
+                rating_text = self.clean_text(rating_element.get_text())
+                if rating_text:
+                    # Clean up rating text - remove extra whitespace
+                    cleaned_rating = " ".join(rating_text.split())
+                    return cleaned_rating
+        
+        return "N/A"
+    
+    def _extract_colors(self, soup) -> str:
+        """Extract color options from JCPenney product"""
+        try:
+            # Look for color selection buttons with images
+            color_buttons = soup.select('button.qMneo img')
+            if color_buttons:
+                colors = []
+                for btn in color_buttons:
+                    alt_text = btn.get('alt', '')
+                    if alt_text and alt_text.lower() != 'null':
+                        colors.append(alt_text)
+                if colors:
+                    return ', '.join(colors)
+        except Exception as e:
+            logger.debug(f"Error extracting colors: {e}")
+        
+        return "N/A"
+    
+    def _extract_promotion_text(self, soup) -> str:
+        """Extract additional promotion text from JCPenney product"""
+        # Look for various promotion text elements
+        promo_text_selectors = [
+            '.promotion-message',
+            '.deal-text',
+            '.special-offer',
+            '.savings-text'
+        ]
+        
+        for selector in promo_text_selectors:
+            promo_element = soup.select_one(selector)
+            if promo_element:
+                promo_text = self.clean_text(promo_element.get_text())
+                if promo_text:
+                    return promo_text
         
         return "N/A"
     
     def _normalize_image_url(self, url: str) -> str:
-        """Normalize image URL for Jared"""
+        """Normalize image URL for JCPenney"""
         if not url:
             return "N/A"
         if url.startswith('http'):
@@ -368,11 +524,11 @@ class JaredParser:
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
-            return f"https://www.jared.com{url}"
+            return f"https://www.jcpenney.com{url}"
         return url
     
     def _normalize_link_url(self, url: str) -> str:
-        """Normalize link URL for Jared"""
+        """Normalize link URL for JCPenney"""
         if not url:
             return "N/A"
         if url.startswith('http'):
@@ -380,24 +536,22 @@ class JaredParser:
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
-            return f"https://www.jared.com{url}"
+            return f"https://www.jcpenney.com{url}"
         return url
 
     def modify_image_url(self, image_url: str) -> str:
-        """Modify the image URL to replace '_260' with '_1200' while keeping query parameters."""
+        """Modify the image URL to get higher resolution images for JCPenney."""
         if not image_url or image_url == "N/A":
             return image_url
 
-        # Extract and preserve query parameters
-        query_params = ""
-        if "?" in image_url:
-            image_url, query_params = image_url.split("?", 1)
-            query_params = f"?{query_params}"
-
-        # Replace '_260' with '_1200' while keeping the rest of the URL intact
-        modified_url = re.sub(r'(_260)(?=\.\w+$)', '_1200', image_url)
-
-        return modified_url + query_params  # Append query parameters if they exist
+        # For JCPenney scene7 images, modify to get higher resolution
+        if 'scene7.com' in image_url:
+            # Replace width and height parameters for higher resolution
+            modified_url = re.sub(r'wid=\d+', 'wid=800', image_url)
+            modified_url = re.sub(r'hei=\d+', 'hei=800', modified_url)
+            return modified_url
+        
+        return image_url
 
     def download_image(self, image_url: str, product_name: str, timestamp: str, 
                       image_folder: str, unique_id: str, retries: int = 3) -> str:
@@ -469,13 +623,16 @@ class JaredParser:
         if not text:
             return "N/A"
         
-        # Diamond weight patterns for Jared
+        # Diamond weight patterns
         weight_patterns = [
+            r'(\d+(?:\/\d+)?)\s*ct\s*tw',  # "1/3 ct tw" or "1/20 ct tw"
             r'(\d+(?:\.\d+)?)\s*ct\s*tw',  # "1.5 ct tw"
             r'(\d+(?:\.\d+)?)\s*ctw',  # "1.5ctw"
             r'(\d+(?:\.\d+)?)\s*carat',  # "1.5 carat"
             r'(\d+/\d+)\s*ct',  # "1/2 ct"
-            r'(\d+-\d+/\d+)\s*ct'  # "1-1/2 ct"
+            r'(\d+-\d+/\d+)\s*ct',  # "1-1/2 ct"
+            r'(\d+(?:\.\d+)?)\s*ct',  # "1.5 ct"
+            r'(\d+(?:\.\d+)?)\s*carats'  # "1.5 carats"
         ]
         
         for pattern in weight_patterns:
@@ -494,13 +651,18 @@ class JaredParser:
         if not text:
             return "N/A"
         
-        # Gold type patterns for Jared
+        # Gold type patterns for JCPenney
         gold_patterns = [
             r'(\d{1,2}K)\s*(?:Yellow|White|Rose)\s*Gold',  # "14K Yellow Gold"
             r'(Yellow|White|Rose)\s*Gold\s*(\d{1,2}K)',  # "Yellow Gold 14K"
             r'(\d{1,2}K)\s*Gold',  # "14K Gold"
             r'(Platinum|Sterling Silver|Silver)',  # Other metals
-            r'(Yellow Gold|White Gold|Rose Gold)'  # Gold colors
+            r'(Yellow Gold|White Gold|Rose Gold)',  # Gold colors
+            r'(\d{1,2}K)\s*(?:YG|WG|RG)',  # "14K YG"
+            r'(White|Yellow|Rose)\s*(\d{1,2}K)',  # "White 14K"
+            r'in\s*(\d{1,2}K)\s*(?:White|Yellow|Rose)\s*Gold',  # "in 14K White Gold"
+            r'(\d{1,2}K)\s*Gold\s*Over\s*Brass',  # "14K Gold Over Brass"
+            r'Pure\s*Silver\s*Over\s*Brass'  # "Pure Silver Over Brass"
         ]
         
         for pattern in gold_patterns:

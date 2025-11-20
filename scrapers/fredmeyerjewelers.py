@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+import time
 import uuid
 import logging
 from datetime import datetime
@@ -10,19 +11,18 @@ from typing import Dict, Any, List
 import requests
 from urllib.parse import urlparse
 from openpyxl import Workbook
-from database.db_inseartin import insert_into_db, update_product_count
-from dotenv import load_dotenv
+from database_quey.db_inseartin import insert_into_db, update_product_count
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-load_dotenv(override=True)
 
 IMAGE_SAVE_PATH = os.getenv("IMAGE_SAVE_PATH")
 EXCEL_DATA_PATH = os.getenv("EXCEL_DATA_PATH")
 
 
-class JaredParser:
-    """Parser for Jared product pages with database and Excel functionality"""
+class FredMeyerJewelersParser:
+    """Parser for Fred Meyer Jewelers product pages with database and Excel functionality"""
     
     def __init__(self, excel_data_path=EXCEL_DATA_PATH, image_save_path=IMAGE_SAVE_PATH):
         self.excel_data_path = excel_data_path
@@ -40,7 +40,7 @@ class JaredParser:
         Returns: JSON response compatible with your requirements
         """
         try:
-            print("=================== Starting Jared Parser ==================")
+            print("=================== Starting Fred Meyer Jewelers Parser ==================")
             print(f"Processing {len(products_data)} product entries")
             
             # Extract HTML content
@@ -57,11 +57,11 @@ class JaredParser:
             current_time = datetime.now().time()
             
             # Create image folder for this session
-            image_folder = os.path.join(self.image_save_path, f"jared_{timestamp}")
+            image_folder = os.path.join(self.image_save_path, f"fredmeyer_{timestamp}")
             os.makedirs(image_folder, exist_ok=True)
             
             # Create Excel file
-            excel_filename = f"jared_scraped_products_{timestamp}.xlsx"
+            excel_filename = f"fredmeyer_scraped_products_{timestamp}.xlsx"
             excel_path = os.path.join(self.excel_data_path, excel_filename)
             
             # Process products
@@ -71,7 +71,7 @@ class JaredParser:
             # Create Excel workbook
             wb = Workbook()
             sheet = wb.active
-            sheet.title = "Jared Products"
+            sheet.title = "Fred Meyer Products"
             
             # Add headers
             headers = [
@@ -86,6 +86,7 @@ class JaredParser:
             for i, product_html in enumerate(individual_products):
                 try:
                     # Parse product data
+                    print(f"Parsing product {i+1}/{len(individual_products)}")
                     parsed_data = self.parse_product(product_html)
                     
                     # Generate unique ID
@@ -172,7 +173,7 @@ class JaredParser:
                 'total_processed': len(database_records),
                 'images_downloaded': successful_downloads,
                 'failed': len(individual_products) - len(database_records),
-                'website_type': 'jared',
+                'website_type': 'fredmeyer',
                 'base64_file': base64_file,
                 'file_path': excel_path
             }
@@ -200,18 +201,19 @@ class JaredParser:
         }
     
     def extract_individual_products_from_html(self, html_content: str) -> List[str]:
-        """Extract individual product HTML blocks from Jared HTML"""
+        """Extract individual product HTML blocks from Fred Meyer Jewelers HTML"""
         if not html_content:
             return []
         
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # Multiple ways to find Jared products
+        # Multiple ways to find Fred Meyer Jewelers products
         product_selectors = [
-            'div.product-grid_tile',  # Main product container
-            'div.product-item',       # Product item
-            'app-product-grid-item-akron',  # Angular component
-            'div[data-product-id]'    # Products with data attributes
+            'article.x-result',  # Main product container
+            '.x-base-grid__result',  # Grid result item
+            '[data-wysiwyg="result"]',  # Products with wysiwyg data
+            '[data-test="search-grid-result"]',  # Search grid results
+            '.x-base-grid__item'  # Grid items
         ]
         
         individual_products = []
@@ -223,17 +225,18 @@ class JaredParser:
             if individual_products:
                 break  # Stop if we found products with this selector
         
-        print(f"Found {len(individual_products)} product tiles in Jared HTML")
+        print(f"Found {len(individual_products)} product tiles in Fred Meyer Jewelers HTML")
         return individual_products
     
     def _extract_product_name(self, soup) -> str:
-        """Extract product name from Jared product tile"""
+        """Extract product name from Fred Meyer Jewelers product tile"""
         # Try multiple selectors for product name
         name_selectors = [
-            'h2.name a',  # Product name in header
-            '.product-tile-description a',  # Product description
-            'a[itemprop="url"]',  # Item prop URL
-            '.js-product-name-details a'  # JavaScript product name
+            'h2[data-test="result-title"]',  # Result title
+            '.x-text1-lg',  # Text class
+            '[data-wysiwyg-title]',  # Wysiwyg title attribute
+            '.x-result__description h2',  # Result description header
+            'h2.x-line-clamp-2'  # Clamped title
         ]
         
         for selector in name_selectors:
@@ -244,13 +247,13 @@ class JaredParser:
         return "N/A"
     
     def _extract_price(self, soup) -> str:
-        """Extract price information from Jared product"""
+        """Extract price information from Fred Meyer Jewelers product"""
         # Current price selectors
         price_selectors = [
-            '.price .plp-align',  # Current price
-            '.product-prices .price',  # Price container
-            '.pj-price',  # Price wrapper
-            '[data-di-id*="price"]'  # Data attribute
+            '[data-test="result-current-price"]',  # Current price
+            '.x-result-current-price',  # Current price class
+            '.x-currency',  # Currency class
+            '.x-font-main.x-text-[15px]'  # Price text class
         ]
         
         for selector in price_selectors:
@@ -269,14 +272,14 @@ class JaredParser:
         return "N/A"
     
     def _extract_image(self, soup) -> str:
-        """Extract product image URL from Jared product"""
+        """Extract product image URL from Fred Meyer Jewelers product"""
         # Image selectors
         img_selectors = [
-            'img[itemprop="image"]',  # Schema image
-            '.main-thumb img',  # Main thumbnail
-            'app-product-primary-image img',  # Primary image component
-            'img.plpimage',  # PLP image
-            'img[src*="productimages"]'  # Product images
+            'img[data-test="result-picture-image"]',  # Result picture image
+            '.x-result-picture-image',  # Result picture class
+            'img.x-picture-image',  # Picture image class
+            '[data-wysiwyg-image-url]',  # Wysiwyg image URL attribute
+            '.x-result__picture img'  # Result picture img
         ]
         
         for selector in img_selectors:
@@ -284,17 +287,22 @@ class JaredParser:
             if img_element and img_element.get('src'):
                 src = img_element.get('src')
                 return self._normalize_image_url(src)
+            
+            # Check for data attribute
+            if img_element and img_element.get('data-wysiwyg-image-url'):
+                src = img_element.get('data-wysiwyg-image-url')
+                return self._normalize_image_url(src)
         
         return "N/A"
     
     def _extract_link(self, soup) -> str:
-        """Extract product link from Jared product"""
+        """Extract product link from Fred Meyer Jewelers product"""
         # Link selectors
         link_selectors = [
-            'h2.name a',  # Name link
-            '.main-thumb',  # Thumbnail link
-            'a[itemprop="url"]',  # Schema URL
-            '.product-tile-description a'  # Description link
+            'a[data-test="result-link"]',  # Result link
+            '.x-result-link',  # Result link class
+            'a.x-result__picture',  # Picture link
+            'a.x-result__description'  # Description link
         ]
         
         for selector in link_selectors:
@@ -316,15 +324,15 @@ class JaredParser:
         return self.extract_gold_type_value(product_name)
     
     def _extract_badges(self, soup) -> list:
-        """Extract badge information from Jared product"""
+        """Extract badge information from Fred Meyer Jewelers product"""
         badges = []
         
-        # Badge selectors
+        # Badge selectors - Fred Meyer Jewelers uses different badge system
         badge_selectors = [
-            '.product-tag',  # Product tags
-            '.secondary-badge .tag-container span',  # Secondary badges
-            '.badge-container span',  # Badge container
-            '.groupby-tablet-product-tags'  # Group badges
+            '.x-badge',  # Badge class
+            '.x-badge-circle',  # Circle badge
+            '[data-test*="badge"]',  # Test attributes with badge
+            '.x-text2-lg'  # Text that might contain badge info
         ]
         
         for selector in badge_selectors:
@@ -332,35 +340,42 @@ class JaredParser:
             for badge in badge_elements:
                 badge_text = self.clean_text(badge.get_text())
                 if badge_text and badge_text not in badges:
-                    badges.append(badge_text)
+                    # Filter out common non-badge text
+                    if not any(excluded in badge_text.lower() for excluded in ['in stock', 'items:', 'results']):
+                        badges.append(badge_text)
         
         return badges
     
     def _extract_promotions(self, soup) -> str:
-        """Extract promotion text from Jared product"""
+        """Extract promotion text from Fred Meyer Jewelers product"""
         # Promotion selectors
         promo_selectors = [
-            '.tag-text',  # Discount tags
-            '.amor-tags .tag-text',  # Amor tags
-            '.discount-percentage',  # Discount percentage
-            '[class*="promotion"]'  # Any promotion class
+            '[data-test="result-previous-price"]',  # Previous price (indicates sale)
+            '.x-result-previous-price',  # Previous price class
+            '.x-line-through'  # Strikethrough text (sale indication)
         ]
         
+        promo_texts = []
+        
+        # Check for sale indicators
         for selector in promo_selectors:
             promo_elements = soup.select(selector)
-            promo_texts = []
             for promo in promo_elements:
                 promo_text = self.clean_text(promo.get_text())
-                if promo_text and "off" in promo_text.lower():
-                    promo_texts.append(promo_text)
-            
-            if promo_texts:
-                return " | ".join(promo_texts)
+                if promo_text and promo_text.startswith('$'):
+                    promo_texts.append(f"Was {promo_text}")
+        
+        # Check for any discount indicators in the text
+        if "on-sale" in soup.get('class', []):
+            promo_texts.append("On Sale")
+        
+        if promo_texts:
+            return " | ".join(promo_texts)
         
         return "N/A"
     
     def _normalize_image_url(self, url: str) -> str:
-        """Normalize image URL for Jared"""
+        """Normalize image URL for Fred Meyer Jewelers"""
         if not url:
             return "N/A"
         if url.startswith('http'):
@@ -368,11 +383,11 @@ class JaredParser:
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
-            return f"https://www.jared.com{url}"
+            return f"https://www.fredmeyerjewelers.com{url}"
         return url
     
     def _normalize_link_url(self, url: str) -> str:
-        """Normalize link URL for Jared"""
+        """Normalize link URL for Fred Meyer Jewelers"""
         if not url:
             return "N/A"
         if url.startswith('http'):
@@ -380,61 +395,39 @@ class JaredParser:
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
-            return f"https://www.jared.com{url}"
+            return f"https://www.fredmeyerjewelers.com{url}"
         return url
 
-    def modify_image_url(self, image_url: str) -> str:
-        """Modify the image URL to replace '_260' with '_1200' while keeping query parameters."""
-        if not image_url or image_url == "N/A":
-            return image_url
+   
 
-        # Extract and preserve query parameters
-        query_params = ""
-        if "?" in image_url:
-            image_url, query_params = image_url.split("?", 1)
-            query_params = f"?{query_params}"
-
-        # Replace '_260' with '_1200' while keeping the rest of the URL intact
-        modified_url = re.sub(r'(_260)(?=\.\w+$)', '_1200', image_url)
-
-        return modified_url + query_params  # Append query parameters if they exist
-
-    def download_image(self, image_url: str, product_name: str, timestamp: str, 
-                      image_folder: str, unique_id: str, retries: int = 3) -> str:
-        """Synchronous image download method with enhanced error handling"""
+    def download_image(image_url, product_name, timestamp, image_folder, unique_id, retries=5, timeout=30):
         if not image_url or image_url == "N/A":
             return "N/A"
 
-        # Clean filename
         image_filename = f"{unique_id}_{timestamp}.jpg"
         image_full_path = os.path.join(image_folder, image_filename)
-        modified_url = self.modify_image_url(image_url)
-        
-        for attempt in range(retries):
+        print(f"Saving image to: {product_name}")
+        print("imageurl:", image_url)
+        print(f"Downloading image: {image_url} to {image_full_path}")
+
+        for attempt in range(1, retries + 1):
             try:
-                response = requests.get(modified_url, timeout=30)
+                headers = {"User-Agent": "Mozilla/5.0"}
+                response = requests.get(image_url, headers=headers, stream=True, timeout=timeout, allow_redirects=True)
                 response.raise_for_status()
-                
-                # Verify it's actually an image
-                content_type = response.headers.get('content-type', '')
-                if not content_type.startswith('image/'):
-                    logger.warning(f"URL {modified_url} returned non-image content type: {content_type}")
-                    continue
-                    
+
                 with open(image_full_path, "wb") as f:
                     f.write(response.content)
-                
-                logger.info(f"Successfully downloaded image for {product_name}")
+
                 return image_full_path
-                
-            except requests.RequestException as e:
-                logger.warning(f"Retry {attempt + 1}/{retries} - Error downloading {product_name}: {e}")
-                if attempt < retries - 1:
-                    import time
-                    time.sleep(2)  # Wait before retry
-        
-        logger.error(f"Failed to download {product_name} after {retries} attempts.")
-        return "N/A"
+
+            except requests.exceptions.RequestException as e:
+                logging.warning(f"Attempt {attempt}: Error downloading {image_url} - {e}")
+                time.sleep(5)
+
+        logging.error(f"Failed to download image after {retries} attempts: {image_url}")
+        return None
+
     
     def extract_price_value(self, text: str) -> str:
         """Extract price from text"""
@@ -469,13 +462,16 @@ class JaredParser:
         if not text:
             return "N/A"
         
-        # Diamond weight patterns for Jared
+        # Diamond weight patterns for Fred Meyer Jewelers
         weight_patterns = [
+            r'(\d+(?:\/\d+)?)\s*ct\.?\s*(?:tw\.?)?',  # "1/5 ct." or "1/2 ct. tw."
             r'(\d+(?:\.\d+)?)\s*ct\s*tw',  # "1.5 ct tw"
             r'(\d+(?:\.\d+)?)\s*ctw',  # "1.5ctw"
             r'(\d+(?:\.\d+)?)\s*carat',  # "1.5 carat"
             r'(\d+/\d+)\s*ct',  # "1/2 ct"
-            r'(\d+-\d+/\d+)\s*ct'  # "1-1/2 ct"
+            r'(\d+-\d+/\d+)\s*ct',  # "1-1/2 ct"
+            r'(\d+(?:\.\d+)?)\s*ct',  # "1.5 ct"
+            r'(\d+(?:\.\d+)?)\s*carats'  # "1.5 carats"
         ]
         
         for pattern in weight_patterns:
@@ -483,7 +479,7 @@ class JaredParser:
             if weight_match:
                 weight = weight_match.group(1)
                 # Standardize the format
-                if 'tw' not in text.lower():
+                if 'tw' not in text.lower() and 't.w.' not in text:
                     return f"{weight} ct tw"
                 return f"{weight} ct"
         
@@ -494,13 +490,16 @@ class JaredParser:
         if not text:
             return "N/A"
         
-        # Gold type patterns for Jared
+        # Gold type patterns for Fred Meyer Jewelers
         gold_patterns = [
             r'(\d{1,2}K)\s*(?:Yellow|White|Rose)\s*Gold',  # "14K Yellow Gold"
             r'(Yellow|White|Rose)\s*Gold\s*(\d{1,2}K)',  # "Yellow Gold 14K"
             r'(\d{1,2}K)\s*Gold',  # "14K Gold"
             r'(Platinum|Sterling Silver|Silver)',  # Other metals
-            r'(Yellow Gold|White Gold|Rose Gold)'  # Gold colors
+            r'(Yellow Gold|White Gold|Rose Gold)',  # Gold colors
+            r'(\d{1,2}K)\s*(?:YG|WG|RG)',  # "14K YG"
+            r'(White|Yellow|Rose)\s*(\d{1,2}K)',  # "White 14K"
+            r'in\s*(\d{1,2}K)\s*(?:White|Yellow|Rose)\s*Gold'  # "in 14K White Gold"
         ]
         
         for pattern in gold_patterns:

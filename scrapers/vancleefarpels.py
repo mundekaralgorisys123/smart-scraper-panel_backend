@@ -10,19 +10,18 @@ from typing import Dict, Any, List
 import requests
 from urllib.parse import urlparse
 from openpyxl import Workbook
-from database.db_inseartin import insert_into_db, update_product_count
-from dotenv import load_dotenv
+from database_quey.db_inseartin import insert_into_db, update_product_count
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-load_dotenv(override=True)
 
 IMAGE_SAVE_PATH = os.getenv("IMAGE_SAVE_PATH")
 EXCEL_DATA_PATH = os.getenv("EXCEL_DATA_PATH")
 
 
-class JaredParser:
-    """Parser for Jared product pages with database and Excel functionality"""
+class VanCleefArpelsScraper:
+    """Scraper for Van Cleef & Arpels product pages with database and Excel functionality"""
     
     def __init__(self, excel_data_path=EXCEL_DATA_PATH, image_save_path=IMAGE_SAVE_PATH):
         self.excel_data_path = excel_data_path
@@ -40,7 +39,7 @@ class JaredParser:
         Returns: JSON response compatible with your requirements
         """
         try:
-            print("=================== Starting Jared Parser ==================")
+            print("=================== Starting Van Cleef & Arpels Scraper ==================")
             print(f"Processing {len(products_data)} product entries")
             
             # Extract HTML content
@@ -57,11 +56,11 @@ class JaredParser:
             current_time = datetime.now().time()
             
             # Create image folder for this session
-            image_folder = os.path.join(self.image_save_path, f"jared_{timestamp}")
+            image_folder = os.path.join(self.image_save_path, f"vancleefarpels_{timestamp}")
             os.makedirs(image_folder, exist_ok=True)
             
             # Create Excel file
-            excel_filename = f"jared_scraped_products_{timestamp}.xlsx"
+            excel_filename = f"vancleefarpels_scraped_products_{timestamp}.xlsx"
             excel_path = os.path.join(self.excel_data_path, excel_filename)
             
             # Process products
@@ -71,7 +70,7 @@ class JaredParser:
             # Create Excel workbook
             wb = Workbook()
             sheet = wb.active
-            sheet.title = "Jared Products"
+            sheet.title = "Van Cleef & Arpels Products"
             
             # Add headers
             headers = [
@@ -172,7 +171,7 @@ class JaredParser:
                 'total_processed': len(database_records),
                 'images_downloaded': successful_downloads,
                 'failed': len(individual_products) - len(database_records),
-                'website_type': 'jared',
+                'website_type': 'vancleefarpels',
                 'base64_file': base64_file,
                 'file_path': excel_path
             }
@@ -185,7 +184,7 @@ class JaredParser:
             }
     
     def parse_product(self, product_html: str) -> Dict[str, Any]:
-        """Parse individual product HTML"""
+        """Parse individual product HTML using Van Cleef & Arpels specific structure"""
         soup = BeautifulSoup(product_html, 'html.parser')
         
         return {
@@ -200,18 +199,18 @@ class JaredParser:
         }
     
     def extract_individual_products_from_html(self, html_content: str) -> List[str]:
-        """Extract individual product HTML blocks from Jared HTML"""
+        """Extract individual product HTML blocks from Van Cleef & Arpels HTML"""
         if not html_content:
             return []
         
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # Multiple ways to find Jared products
+        # Van Cleef & Arpels specific product selectors
         product_selectors = [
-            'div.product-grid_tile',  # Main product container
-            'div.product-item',       # Product item
-            'app-product-grid-item-akron',  # Angular component
-            'div[data-product-id]'    # Products with data attributes
+            'li.vca-srl-product-tile',  # Main product list item
+            'article.vca-pl-product',  # Product article
+            'li[data-page="true"]',  # Data page items
+            '.results-list li',  # Results list items
         ]
         
         individual_products = []
@@ -221,80 +220,73 @@ class JaredParser:
             for tile in product_tiles:
                 individual_products.append(str(tile))
             if individual_products:
-                break  # Stop if we found products with this selector
+                break
         
-        print(f"Found {len(individual_products)} product tiles in Jared HTML")
+        print(f"Found {len(individual_products)} product tiles in Van Cleef & Arpels HTML")
         return individual_products
     
     def _extract_product_name(self, soup) -> str:
-        """Extract product name from Jared product tile"""
-        # Try multiple selectors for product name
-        name_selectors = [
-            'h2.name a',  # Product name in header
-            '.product-tile-description a',  # Product description
-            'a[itemprop="url"]',  # Item prop URL
-            '.js-product-name-details a'  # JavaScript product name
-        ]
+        """Extract product name from Van Cleef & Arpels product tile"""
+        # Extract main product name from h2 tag
+        name_element = soup.select_one('h2.product-name.vca-product-list-01')
+        if name_element:
+            product_name = self.clean_text(name_element.get_text())
+            
+            # Add description to product name (matching your Playwright code)
+            desc_element = soup.select_one('p.product-description.vca-body-02.vca-text-center')
+            if desc_element:
+                desc_text = self.clean_text(desc_element.get_text())
+                if desc_text:
+                    product_name += f" - {desc_text}"
+            
+            return product_name
         
-        for selector in name_selectors:
-            name_element = soup.select_one(selector)
-            if name_element and name_element.get_text(strip=True):
-                return self.clean_text(name_element.get_text())
+        # Fallback to link text
+        link_element = soup.select_one('a.vca-srl-ref-link')
+        if link_element:
+            return self.clean_text(link_element.get_text())
         
         return "N/A"
     
     def _extract_price(self, soup) -> str:
-        """Extract price information from Jared product"""
-        # Current price selectors
-        price_selectors = [
-            '.price .plp-align',  # Current price
-            '.product-prices .price',  # Price container
-            '.pj-price',  # Price wrapper
-            '[data-di-id*="price"]'  # Data attribute
-        ]
-        
-        for selector in price_selectors:
-            price_element = soup.select_one(selector)
-            if price_element:
-                price_text = price_element.get_text(strip=True)
-                extracted_price = self.extract_price_value(price_text)
-                if extracted_price != "N/A":
-                    return extracted_price
+        """Extract price from Van Cleef & Arpels product"""
+        price_element = soup.select_one('span.vca-price')
+        if price_element:
+            price_text = price_element.get_text(strip=True)
+            return self.extract_price_value(price_text)
         
         # Look for price in any text
-        price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
+        price_match = re.search(r'\$\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
         if price_match:
-            return price_match.group(0)
+            return price_match.group(0).replace(' ', '')  # Remove spaces from price
         
         return "N/A"
     
     def _extract_image(self, soup) -> str:
-        """Extract product image URL from Jared product"""
-        # Image selectors
+        """Extract image URL from Van Cleef & Arpels product"""
+        # Van Cleef & Arpels specific image selectors
         img_selectors = [
-            'img[itemprop="image"]',  # Schema image
-            '.main-thumb img',  # Main thumbnail
-            'app-product-primary-image img',  # Primary image component
-            'img.plpimage',  # PLP image
-            'img[src*="productimages"]'  # Product images
+            'div.image-container img',  # Main image container
+            '.swiper-slide-active img',  # Active swiper slide image
+            '.product-tile img',  # Product tile image
+            'img[src*="vancleefarpels.com"]',  # Van Cleef & Arpels domain images
         ]
         
         for selector in img_selectors:
             img_element = soup.select_one(selector)
             if img_element and img_element.get('src'):
-                src = img_element.get('src')
-                return self._normalize_image_url(src)
+                image_src = img_element.get('src')
+                return image_src  # Return relative URL for modification later
         
         return "N/A"
     
     def _extract_link(self, soup) -> str:
-        """Extract product link from Jared product"""
-        # Link selectors
+        """Extract product link from Van Cleef & Arpels product"""
         link_selectors = [
-            'h2.name a',  # Name link
-            '.main-thumb',  # Thumbnail link
-            'a[itemprop="url"]',  # Schema URL
-            '.product-tile-description a'  # Description link
+            'a.vca-srl-ref-link',  # Main product link
+            'a[href*="/collections/"]',  # Collection links
+            'a[data-reference]',  # Links with data reference
+            '.vca-swiper-pdp-link',  # Swiper PDP links
         ]
         
         for selector in link_selectors:
@@ -306,44 +298,111 @@ class JaredParser:
         return "N/A"
     
     def _extract_diamond_weight(self, soup) -> str:
-        """Extract diamond weight from product name"""
+        """Extract diamond weight from product name and description"""
         product_name = self._extract_product_name(soup)
-        return self.extract_diamond_weight_value(product_name)
+        
+        # Try to extract from product name first
+        diamond_weight = self.extract_diamond_weight_value(product_name)
+        if diamond_weight != "N/A":
+            return diamond_weight
+        
+        # Try to extract from data attributes
+        product_tile = soup.select_one('div[data-vue-stats-product]')
+        if product_tile and product_tile.get('data-vue-stats-product'):
+            try:
+                import json
+                stats_data = product_tile.get('data-vue-stats-product')
+                product_stats = json.loads(stats_data)
+                
+                # Look for diamond information in stats
+                if 'item_name' in product_stats:
+                    item_name = product_stats['item_name']
+                    diamond_match = re.search(r'(\d+(?:\.\d+)?)\s*carats', item_name, re.IGNORECASE)
+                    if diamond_match:
+                        return f"{diamond_match.group(1)} ct"
+            except:
+                pass
+        
+        return "N/A"
     
     def _extract_gold_type(self, soup) -> str:
-        """Extract gold type from product name"""
+        """Extract gold type from product description and data attributes"""
+        # First try to extract from product description
+        desc_element = soup.select_one('p.product-description.vca-body-02.vca-text-center')
+        if desc_element:
+            desc_text = self.clean_text(desc_element.get_text())
+            gold_type = self.extract_gold_type_value(desc_text)
+            if gold_type != "N/A":
+                return gold_type
+        
+        # Try to extract from product name
         product_name = self._extract_product_name(soup)
-        return self.extract_gold_type_value(product_name)
+        gold_type = self.extract_gold_type_value(product_name)
+        if gold_type != "N/A":
+            return gold_type
+        
+        # Try to extract from data attributes
+        product_tile = soup.select_one('div[data-vue-stats-product]')
+        if product_tile and product_tile.get('data-vue-stats-product'):
+            try:
+                import json
+                stats_data = product_tile.get('data-vue-stats-product')
+                product_stats = json.loads(stats_data)
+                
+                # Extract material from stats
+                if 'item_material_jewelry' in product_stats:
+                    material = product_stats['item_material_jewelry']
+                    if material and material != "N/A":
+                        return material
+            except:
+                pass
+        
+        return "N/A"
     
     def _extract_badges(self, soup) -> list:
-        """Extract badge information from Jared product"""
+        """Extract badges and additional info from Van Cleef & Arpels product"""
         badges = []
         
-        # Badge selectors
-        badge_selectors = [
-            '.product-tag',  # Product tags
-            '.secondary-badge .tag-container span',  # Secondary badges
-            '.badge-container span',  # Badge container
-            '.groupby-tablet-product-tags'  # Group badges
-        ]
+        # Extract collection information from data attributes
+        product_tile = soup.select_one('div[data-vue-stats-product]')
+        if product_tile and product_tile.get('data-vue-stats-product'):
+            try:
+                import json
+                stats_data = product_tile.get('data-vue-stats-product')
+                product_stats = json.loads(stats_data)
+                
+                # Add collection as badge
+                if 'item_collection' in product_stats:
+                    collection = product_stats['item_collection']
+                    if collection and collection != "N/A" and collection != "White diamond High Jewelry":
+                        badges.append(collection)
+                
+                # Add line as badge
+                if 'item_line' in product_stats:
+                    line = product_stats['item_line']
+                    if line and line != "N/A" and line != "HIGH_JEWELRY":
+                        badges.append(line.replace('_', ' ').title())
+            except:
+                pass
         
-        for selector in badge_selectors:
-            badge_elements = soup.select(selector)
-            for badge in badge_elements:
-                badge_text = self.clean_text(badge.get_text())
-                if badge_text and badge_text not in badges:
-                    badges.append(badge_text)
+        # Extract special edition info
+        special_edition = soup.select_one('[class*="special"]')
+        if special_edition:
+            badge_text = self.clean_text(special_edition.get_text())
+            if badge_text:
+                badges.append(badge_text)
         
         return badges
     
     def _extract_promotions(self, soup) -> str:
-        """Extract promotion text from Jared product"""
-        # Promotion selectors
+        """Extract promotion text from Van Cleef & Arpels product"""
+        # Van Cleef & Arpels doesn't seem to have prominent promotions
+        # Look for any promotional elements
         promo_selectors = [
-            '.tag-text',  # Discount tags
-            '.amor-tags .tag-text',  # Amor tags
-            '.discount-percentage',  # Discount percentage
-            '[class*="promotion"]'  # Any promotion class
+            '[class*="promo"]',
+            '[class*="sale"]',
+            '[class*="new"]',
+            '.on-demand',  # On demand products
         ]
         
         for selector in promo_selectors:
@@ -351,7 +410,7 @@ class JaredParser:
             promo_texts = []
             for promo in promo_elements:
                 promo_text = self.clean_text(promo.get_text())
-                if promo_text and "off" in promo_text.lower():
+                if promo_text and ("sale" in promo_text.lower() or "promo" in promo_text.lower() or "new" in promo_text.lower()):
                     promo_texts.append(promo_text)
             
             if promo_texts:
@@ -360,44 +419,68 @@ class JaredParser:
         return "N/A"
     
     def _normalize_image_url(self, url: str) -> str:
-        """Normalize image URL for Jared"""
-        if not url:
+        """Normalize image URL for Van Cleef & Arpels"""
+        if not url or url == "N/A":
             return "N/A"
         if url.startswith('http'):
             return url
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
-            return f"https://www.jared.com{url}"
+            return f"https://www.vancleefarpels.com{url}"
         return url
     
     def _normalize_link_url(self, url: str) -> str:
-        """Normalize link URL for Jared"""
-        if not url:
+        """Normalize link URL for Van Cleef & Arpels"""
+        if not url or url == "N/A":
             return "N/A"
         if url.startswith('http'):
             return url
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
-            return f"https://www.jared.com{url}"
+            return f"https://www.vancleefarpels.com{url}"
         return url
 
-    def modify_image_url(self, image_url: str) -> str:
-        """Modify the image URL to replace '_260' with '_1200' while keeping query parameters."""
+    def modify_image_url(self, image_url):
+        """
+        Get the highest quality version of Van Cleef & Arpels images.
+        """
         if not image_url or image_url == "N/A":
             return image_url
 
-        # Extract and preserve query parameters
-        query_params = ""
-        if "?" in image_url:
-            image_url, query_params = image_url.split("?", 1)
-            query_params = f"?{query_params}"
-
-        # Replace '_260' with '_1200' while keeping the rest of the URL intact
-        modified_url = re.sub(r'(_260)(?=\.\w+$)', '_1200', image_url)
-
-        return modified_url + query_params  # Append query parameters if they exist
+        print(f"Original image URL: {image_url}")
+        
+        # First normalize the URL to absolute format
+        normalized_url = self._normalize_image_url(image_url)
+        print(f"Normalized URL: {normalized_url}")
+        
+        # Strategy 1: Try to get the original image without any transforms
+        if '.transform.' in normalized_url:
+            # Remove everything after the original file extension including .transform
+            # Pattern: /path/to/image.jpeg.transform.vca-w350-1x.png
+            if '.jpeg.transform.' in normalized_url:
+                original_url = normalized_url.split('.jpeg.transform.')[0] + '.jpeg'
+                print(f"Strategy 1 - Original JPEG: {original_url}")
+                return original_url
+            elif '.jpg.transform.' in normalized_url:
+                original_url = normalized_url.split('.jpg.transform.')[0] + '.jpg'
+                print(f"Strategy 1 - Original JPG: {original_url}")
+                return original_url
+            elif '.png.transform.' in normalized_url:
+                original_url = normalized_url.split('.png.transform.')[0] + '.png'
+                print(f"Strategy 1 - Original PNG: {original_url}")
+                return original_url
+        
+        # Strategy 2: If we can't get the original, try to get the highest quality transform
+        if 'transform.vca-w' in normalized_url:
+            # Replace with larger size (from w350 to w1200)
+            high_quality_url = re.sub(r'transform\.vca-w\d+-\d+x', 'transform.vca-w1200-1x', normalized_url)
+            print(f"Strategy 2 - High quality: {high_quality_url}")
+            return high_quality_url
+        
+        print(f"Final - Using normalized: {normalized_url}")
+        return normalized_url
 
     def download_image(self, image_url: str, product_name: str, timestamp: str, 
                       image_folder: str, unique_id: str, retries: int = 3) -> str:
@@ -408,11 +491,26 @@ class JaredParser:
         # Clean filename
         image_filename = f"{unique_id}_{timestamp}.jpg"
         image_full_path = os.path.join(image_folder, image_filename)
+        
+        # Modify the image URL to get higher quality
         modified_url = self.modify_image_url(image_url)
+        # print(f"Downloading image for {product_name} from {modified_url}")
         
         for attempt in range(retries):
             try:
-                response = requests.get(modified_url, timeout=30)
+                response = requests.get(
+                    modified_url,
+                    timeout=45,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128 Safari/537.36",
+                        "Referer": "https://www.vancleefarpels.com/",
+                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Connection": "keep-alive"
+                    },
+                    allow_redirects=True,
+                    stream=True
+                )
                 response.raise_for_status()
                 
                 # Verify it's actually an image
@@ -431,7 +529,7 @@ class JaredParser:
                 logger.warning(f"Retry {attempt + 1}/{retries} - Error downloading {product_name}: {e}")
                 if attempt < retries - 1:
                     import time
-                    time.sleep(2)  # Wait before retry
+                    time.sleep(2)
         
         logger.error(f"Failed to download {product_name} after {retries} attempts.")
         return "N/A"
@@ -441,16 +539,10 @@ class JaredParser:
         if not text:
             return "N/A"
         
-        # Look for price patterns
-        price_patterns = [
-            r'\$[\d,]+\.?\d*',  # Standard price format
-            r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?',  # Formatted price
-        ]
-        
-        for pattern in price_patterns:
-            price_match = re.search(pattern, text)
-            if price_match:
-                return price_match.group(0)
+        # Van Cleef & Arpels price format: "$ 905,000" with space
+        price_match = re.search(r'\$\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?', text)
+        if price_match:
+            return price_match.group(0).replace(' ', '')  # Remove spaces
         
         return "N/A"
     
@@ -458,9 +550,7 @@ class JaredParser:
         """Clean and normalize text"""
         if not text:
             return ""
-        # Remove extra whitespace and normalize
         text = ' '.join(text.split()).strip()
-        # Remove multiple spaces
         text = re.sub(r'\s+', ' ', text)
         return text
     
@@ -469,21 +559,21 @@ class JaredParser:
         if not text:
             return "N/A"
         
-        # Diamond weight patterns for Jared
         weight_patterns = [
-            r'(\d+(?:\.\d+)?)\s*ct\s*tw',  # "1.5 ct tw"
-            r'(\d+(?:\.\d+)?)\s*ctw',  # "1.5ctw"
-            r'(\d+(?:\.\d+)?)\s*carat',  # "1.5 carat"
-            r'(\d+/\d+)\s*ct',  # "1/2 ct"
-            r'(\d+-\d+/\d+)\s*ct'  # "1-1/2 ct"
+            r'(\d+(?:\.\d+)?)\s*ct\s*tw',
+            r'(\d+(?:\.\d+)?)\s*ctw',
+            r'(\d+(?:\.\d+)?)\s*carat',
+            r'(\d+(?:\.\d+)?)\s*carats',
+            r'(\d+)\s*stones',  # For Van Cleef & Arpels format
         ]
         
         for pattern in weight_patterns:
             weight_match = re.search(pattern, text, re.IGNORECASE)
             if weight_match:
                 weight = weight_match.group(1)
-                # Standardize the format
-                if 'tw' not in text.lower():
+                if 'carat' in text.lower() or 'stones' in text.lower():
+                    return f"{weight} ct"
+                elif 'tw' not in text.lower():
                     return f"{weight} ct tw"
                 return f"{weight} ct"
         
@@ -494,19 +584,17 @@ class JaredParser:
         if not text:
             return "N/A"
         
-        # Gold type patterns for Jared
         gold_patterns = [
-            r'(\d{1,2}K)\s*(?:Yellow|White|Rose)\s*Gold',  # "14K Yellow Gold"
-            r'(Yellow|White|Rose)\s*Gold\s*(\d{1,2}K)',  # "Yellow Gold 14K"
-            r'(\d{1,2}K)\s*Gold',  # "14K Gold"
-            r'(Platinum|Sterling Silver|Silver)',  # Other metals
-            r'(Yellow Gold|White Gold|Rose Gold)'  # Gold colors
+            r'(\d+k)\s*(?:White|Yellow|Rose)?\s*Gold',
+            r'(White|Yellow|Rose)\s*Gold\s*(\d+k)',
+            r'(\d+k)\s*Gold',
+            r'(Platinum|Sterling Silver|Silver)',
+            r'(White Gold|Yellow Gold|Rose Gold)',
         ]
         
         for pattern in gold_patterns:
             gold_match = re.search(pattern, text, re.IGNORECASE)
             if gold_match:
-                # Return the matched groups, filtering out None
                 gold_parts = [part for part in gold_match.groups() if part]
                 return ' '.join(gold_parts).title()
         
