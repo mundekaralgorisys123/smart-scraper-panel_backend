@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+import time
 import uuid
 import logging
 from datetime import datetime
@@ -10,7 +11,9 @@ from typing import Dict, Any, List
 import requests
 from urllib.parse import urlparse
 from openpyxl import Workbook
-from database.db_inseartin import insert_into_db, update_product_count
+from database_quey.db_inseartin import insert_into_db, update_product_count
+from PIL import Image
+import io
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -91,10 +94,10 @@ class BulgariScraper:
                     unique_id = str(uuid.uuid4())
                     product_name = parsed_data.get('product_name', 'Unknown Product')[:495]
                     
-                    # Download image - use sync method
+                    # Download image - FIXED: Removed timestamp parameter
                     image_url = parsed_data.get('image_url')
                     image_path = self.download_image(
-                        image_url, product_name, timestamp, image_folder, unique_id
+                        image_url, product_name, image_folder, unique_id  # Removed timestamp
                     )
                     
                     if image_path != "N/A":
@@ -111,7 +114,7 @@ class BulgariScraper:
                         additional_info_parts.append(promotions)
                     
                     additional_info = " | ".join(additional_info_parts) if additional_info_parts else "N/A"
-                    
+                
                     # Create database record
                     db_record = {
                         'unique_id': unique_id,
@@ -228,7 +231,7 @@ class BulgariScraper:
         return individual_products
     
     def _extract_product_name(self, soup) -> str:
-        """Extract product name from Bulgari product tile"""
+        """Extract product name from Bulgari product tile including gold type"""
         name_selectors = [
             '.product-tile__title',  # Product title
             'h2.chakra-heading',  # Heading
@@ -239,7 +242,37 @@ class BulgariScraper:
             name_element = soup.select_one(selector)
             if name_element:
                 product_name = self.clean_text(name_element.get_text())
+                
+                # Also look for gold type/material information
+                gold_type = self._extract_gold_type_from_product_tile(soup)
+                if gold_type and gold_type != "N/A":
+                    return f"{product_name} {gold_type}"
+                
                 return product_name
+        
+        return "N/A"
+
+    def _extract_gold_type_from_product_tile(self, soup) -> str:
+        """Extract gold type specifically from product tile structure"""
+        # Look for material/gold type in the product tile
+        material_selectors = [
+            '.chakra-text.css-16yz1ii',  # Material text (like "Yellow gold")
+            '.product-tile__material',
+            '.product-tile__details p',
+            '[data-testid="product-material"]',
+        ]
+        
+        for selector in material_selectors:
+            material_element = soup.select_one(selector)
+            if material_element:
+                material_text = self.clean_text(material_element.get_text())
+                # Check if it's actually a gold type
+                gold_type = self.extract_gold_type_value(material_text)
+                if gold_type != "N/A":
+                    return gold_type
+                # If not a recognized gold type but contains gold/platinum, return as is
+                if any(word in material_text.lower() for word in ['gold', 'platinum', 'silver', 'rose', 'white', 'yellow']):
+                    return material_text
         
         return "N/A"
     
@@ -421,61 +454,205 @@ class BulgariScraper:
         
         return " | ".join(promotions) if promotions else "N/A"
     
-    def download_image(self, image_url: str, product_name: str, timestamp: str, 
-                      image_folder: str, unique_id: str, retries: int = 3) -> str:
-        """Synchronous image download method with enhanced error handling"""
+
+
+    # def download_image(self, image_url: str, product_name: str, image_folder: str, unique_id: str, retries: int = 2) -> str:
+    #     """
+    #     Download images for Bulgari without enhancement or conversion
+    #     """
+    #     print("=================== Downloading Image ==================")
+    #     print(f"Downloading image for product: {image_url}")
+    #     print("=================== Downloading Image ==================")
+    #     if not image_url or image_url == "N/A":
+    #         return "N/A"
+
+    #     # Clean filename
+    #     clean_name = self._clean_filename(product_name)
+    #     if len(clean_name) > 50:
+    #         clean_name = clean_name[:50]
+
+    #     logger.info(f"Downloading image for: {product_name}")
+    #     logger.info(f"Original URL: {image_url}")
+
+    #     for attempt in range(retries):
+    #         try:
+    #             logger.info(f"Attempt {attempt + 1} with URL: {image_url}")
+                
+    #             headers = {
+    #                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    #                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    #                 "Accept-Language": "en-US,en;q=0.9",
+    #                 "Referer": "https://www.bulgari.com/",
+    #             }
+
+    #             response = requests.get(image_url, headers=headers, timeout=15, stream=True)
+                
+    #             logger.info(f"Response status: {response.status_code}")
+                
+    #             if response.status_code == 200:
+    #                 content_type = response.headers.get('content-type', '')
+    #                 logger.info(f"Content-Type: {content_type}")
+                    
+    #                 if not content_type.startswith('image/'):
+    #                     logger.warning(f"Non-image content type: {content_type}")
+    #                     continue
+
+    #                 # Get file extension from content type
+    #                 file_extension = self._get_file_extension_from_content_type(content_type)
+    #                 image_filename = f"{unique_id}_{clean_name}{file_extension}"
+    #                 image_full_path = os.path.join(image_folder, image_filename)
+
+    #                 # Save image as-is without conversion
+    #                 with open(image_full_path, "wb") as f:
+    #                     for chunk in response.iter_content(chunk_size=8192):
+    #                         if chunk:
+    #                             f.write(chunk)
+
+    #                 # Verify download
+    #                 if os.path.exists(image_full_path):
+    #                     file_size = os.path.getsize(image_full_path)
+    #                     if file_size > 1000:
+    #                         logger.info(f"✅ Successfully downloaded: {product_name} ({file_size} bytes) as {file_extension}")
+    #                         return image_full_path
+    #                     else:
+    #                         logger.warning(f"Downloaded file too small: {file_size} bytes")
+    #                         os.remove(image_full_path)
+    #                 else:
+    #                     logger.warning("File was not created")
+                        
+    #             elif response.status_code == 404:
+    #                 logger.warning(f"Image not found (404): {image_url}")
+    #                 break  # Don't retry if 404
+                    
+    #         except requests.exceptions.Timeout:
+    #             logger.warning(f"Timeout on attempt {attempt + 1}")
+    #         except requests.exceptions.ConnectionError as e:
+    #             logger.warning(f"Connection error on attempt {attempt + 1}: {str(e)}")
+    #         except requests.exceptions.RequestException as e:
+    #             logger.warning(f"Request exception on attempt {attempt + 1}: {e}")
+    #         except Exception as e:
+    #             logger.warning(f"Unexpected error on attempt {attempt + 1}: {e}")
+            
+    #         # Wait before retry
+    #         if attempt < retries - 1:
+    #             time.sleep(1)
+
+    #     logger.error(f"❌ Failed to download: {product_name}")
+    #     return "N/A"
+
+
+    def convert_bulgari_url_to_jpg(self, url: str) -> str:
+        # Replace first f_auto → f_jpg
+        url = url.replace("f_auto", "f_jpg", 1)
+
+        # Remove second f_auto/ if exists
+        url = url.replace("f_auto/", "")
+
+        # Force JPG extension
+        url = re.sub(r"\.(png|jpg|jpeg|avif|webp)$", ".jpg", url)
+
+        return url
+
+
+
+    def download_image(self, image_url: str, product_name: str, image_folder: str, unique_id: str, retries: int = 2) -> str:
+        """
+        Download images for Bulgari (always JPG). No AVIF conversion needed.
+        """
+        print("=================== Downloading Image ==================")
+        print(f"Downloading image for product: {image_url}")
+        print("========================================================")
+
         if not image_url or image_url == "N/A":
             return "N/A"
 
         # Clean filename
-        image_filename = f"{unique_id}_{timestamp}.jpg"
-        image_full_path = os.path.join(image_folder, image_filename)
-        
-        # Modify the image URL to get higher quality
-        enhanced_url = self._normalize_bulgari_image_url(image_url)
-        
-        print(f"Original URL: {image_url}")
-        print(f"Enhanced URL: {enhanced_url}")
-        print(f"Downloading image for {product_name} from {enhanced_url}")
-        
+        clean_name = self._clean_filename(product_name)
+        if len(clean_name) > 50:
+            clean_name = clean_name[:50]
+
+        logger.info(f"Downloading image for: {product_name}")
+        logger.info(f"Original URL: {image_url}")
+
+        # 🔥 FORCE JPG URL
+        image_url = self.convert_bulgari_url_to_jpg(image_url)
+
         for attempt in range(retries):
             try:
-                response = requests.get(
-                    enhanced_url,  # Use the enhanced URL here
-                    timeout=45,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128 Safari/537.36",
-                        "Referer": "https://www.bulgari.com/",
-                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Connection": "keep-alive"
-                    },
-                    allow_redirects=True,
-                    stream=True
-                )
-                response.raise_for_status()
-                
-                # Verify it's actually an image
-                content_type = response.headers.get('content-type', '')
-                if not content_type.startswith('image/'):
-                    logger.warning(f"URL {enhanced_url} returned non-image content type: {content_type}")
+                logger.info(f"Attempt {attempt + 1} with URL: {image_url}")
+
+                headers = {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "image/jpg,image/jpeg,image/*;q=0.8,*/*;q=0.5",
+                    "Referer": "https://www.bulgari.com/",
+                }
+
+                response = requests.get(image_url, headers=headers, timeout=15, stream=True)
+                logger.info(f"Response status: {response.status_code}")
+
+                if response.status_code != 200:
                     continue
-                    
-                with open(image_full_path, "wb") as f:
-                    f.write(response.content)
-                
-                logger.info(f"Successfully downloaded image for {product_name}")
-                return image_full_path
-                
-            except requests.RequestException as e:
-                logger.warning(f"Retry {attempt + 1}/{retries} - Error downloading {product_name}: {e}")
-                if attempt < retries - 1:
-                    import time
-                    time.sleep(2)
-        
-        logger.error(f"Failed to download {product_name} after {retries} attempts.")
+
+                # Always save as JPG
+                final_filename = f"{unique_id}_{clean_name}.jpg"
+                final_full_path = os.path.join(image_folder, final_filename)
+
+                with open(final_full_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+
+                # Validate image download
+                if os.path.exists(final_full_path) and os.path.getsize(final_full_path) > 1000:
+                    logger.info(f"✅ Successfully downloaded JPG: {final_full_path}")
+                    return final_full_path
+                else:
+                    logger.warning("Downloaded file too small, retrying...")
+                    continue
+
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed: {e}")
+
+            time.sleep(1)
+
+        logger.error(f"❌ Failed to download: {product_name}")
         return "N/A"
-    
+
+
+    def _get_file_extension_from_content_type(self, content_type: str) -> str:
+        """Get appropriate file extension from content type"""
+        content_type = content_type.lower()
+        
+        if 'avif' in content_type:
+            return '.avif'
+        elif 'webp' in content_type:
+            return '.webp'
+        elif 'png' in content_type:
+            return '.png'
+        elif 'jpeg' in content_type or 'jpg' in content_type:
+            return '.jpg'
+        elif 'gif' in content_type:
+            return '.gif'
+        elif 'svg' in content_type:
+            return '.svg'
+        else:
+            return '.jpg'  # Fallback
+
+    def _clean_filename(self, filename: str) -> str:
+        """Clean filename to remove invalid characters"""
+        if not filename:
+            return "unknown"
+        # Remove invalid filename characters
+        invalid_chars = '<>:"/\\|?*'
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        # Remove multiple spaces and trim
+        filename = re.sub(r'\s+', ' ', filename).strip()
+        # Limit filename length
+        if len(filename) > 100:
+            filename = filename[:100]
+        return filename
+
     def extract_price_value(self, text: str) -> str:
         """Extract price from text"""
         if not text:
