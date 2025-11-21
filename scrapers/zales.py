@@ -11,8 +11,9 @@ import requests
 from urllib.parse import urlparse
 from openpyxl import Workbook
 from database.db_inseartin import insert_into_db, update_product_count
-from dotenv import load_dotenv
-load_dotenv(override=True)
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -247,32 +248,31 @@ class ZalesParser:
         return "N/A"
     
     def _extract_price(self, soup) -> str:
-        """Extract price information from Zales product"""
-        # Current price selectors
-        price_selectors = [
-            '.price .plp-align',  # Current price
-            '.product-prices .price',  # Price container
-            '.pj-price',  # Price wrapper
-            '[data-di-id*="price"]',  # Data attribute
-            '.current-price',  # Current price alternative
-            '.sales-price',  # Sales price
-            '.groupby-red-nowprice-font'  # Zales specific price class
-        ]
+        """Extract price, discount, and original price for Zales product"""
         
-        for selector in price_selectors:
-            price_element = soup.select_one(selector)
-            if price_element:
-                price_text = price_element.get_text(strip=True)
-                extracted_price = self.extract_price_value(price_text)
-                if extracted_price != "N/A":
-                    return extracted_price
-        
-        # Look for price in any text
-        price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
-        if price_match:
-            return price_match.group(0)
-        
-        return "N/A"
+        html_text = soup.get_text(" ", strip=True)
+
+        # --- 1) Extract sale price ---
+        sale_price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', html_text)
+        sale_price = sale_price_match.group(0) if sale_price_match else "N/A"
+
+        # --- 2) Extract discount ---
+        discount_match = re.search(r'(\d+% off)', html_text, re.IGNORECASE)
+        discount = discount_match.group(0) if discount_match else "N/A"
+
+        # --- 3) Calculate original price ---
+        original_price = "N/A"
+        if sale_price != "N/A" and discount != "N/A":
+            try:
+                discount_percent = int(re.search(r'(\d+)%', discount).group(1))
+                sale_value = float(sale_price.replace("$", "").replace(",", ""))
+                original_value = sale_value / (1 - (discount_percent / 100))
+                original_price = f"${original_value:,.2f}"
+            except:
+                original_price = "N/A"
+
+        return f"{sale_price} | {discount} | {original_price}"
+
     
     def _extract_image(self, soup) -> str:
         """Extract product image URL from Zales product"""
@@ -404,21 +404,42 @@ class ZalesParser:
             return f"https://www.zales.com{url}"
         return url
 
+
     def modify_image_url(self, image_url: str) -> str:
-        """Modify the image URL to replace '_260' with '_1200' while keeping query parameters."""
+        """Return best available image URL: try 1200 → 800 → original."""
         if not image_url or image_url == "N/A":
             return image_url
 
-        # Extract and preserve query parameters
+        # Preserve query parameters
         query_params = ""
         if "?" in image_url:
             image_url, query_params = image_url.split("?", 1)
             query_params = f"?{query_params}"
 
-        # Replace '_260' with '_1200' while keeping the rest of the URL intact
-        modified_url = re.sub(r'(_260)(?=\.\w+$)', '_1200', image_url)
+        # Only modify if '_260' exists
+        if "_260" not in image_url:
+            return image_url + query_params
 
-        return modified_url + query_params  # Append query parameters if they exist
+        # Generate all possible versions
+        url_1200 = image_url.replace("_260", "_1200")
+        url_800 = image_url.replace("_260", "_800")
+
+        # Function to check if a URL exists
+        def url_exists(url):
+            try:
+                r = requests.head(url, timeout=5, verify=False)
+                return r.status_code == 200
+            except:
+                return False
+
+        # Try highest quality first
+        if url_exists(url_1200):
+            return url_1200 + query_params
+        elif url_exists(url_800):
+            return url_800 + query_params
+        else:
+            return image_url + query_params  # fallback to original
+
 
     def download_image(self, image_url: str, product_name: str, timestamp: str, 
                       image_folder: str, unique_id: str, retries: int = 3) -> str:
@@ -429,6 +450,8 @@ class ZalesParser:
         # Clean filename
         image_filename = f"{unique_id}_{timestamp}.jpg"
         image_full_path = os.path.join(image_folder, image_filename)
+
+        print(f"Downloading image for {image_url}")
         modified_url = self.modify_image_url(image_url)
         
         for attempt in range(retries):
@@ -457,23 +480,7 @@ class ZalesParser:
         logger.error(f"Failed to download {product_name} after {retries} attempts.")
         return "N/A"
     
-    def extract_price_value(self, text: str) -> str:
-        """Extract price from text"""
-        if not text:
-            return "N/A"
-        
-        # Look for price patterns
-        price_patterns = [
-            r'\$[\d,]+\.?\d*',  # Standard price format
-            r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?',  # Formatted price
-        ]
-        
-        for pattern in price_patterns:
-            price_match = re.search(pattern, text)
-            if price_match:
-                return price_match.group(0)
-        
-        return "N/A"
+
     
     def clean_text(self, text: str) -> str:
         """Clean and normalize text"""

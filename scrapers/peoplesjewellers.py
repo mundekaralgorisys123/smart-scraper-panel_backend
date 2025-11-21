@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 import re
 from typing import Dict, Any, List
 from openpyxl import Workbook
-from database_quey.db_inseartin import insert_into_db, update_product_count
+from database.db_inseartin import insert_into_db, update_product_count
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

@@ -187,17 +187,7 @@ def extract_diamond_weight(text):
     smallest = min(diamond_cts, key=lambda x: x[2])
     return standardize_diawt_value(f"{smallest[0]} {smallest[1]}")
 
-def extract_price(price_text):
-    """Extract current price from price text"""
-    if not price_text:
-        return None
-    
-    # Look for the first price (current price)
-    price_match = re.search(r'\$[\d,]+(?:\.\d{2})?', str(price_text))
-    if price_match:
-        return price_match.group(0)
-    
-    return None
+
 
 def process_row(row):
     """Process individual row data for database insertion"""
@@ -212,7 +202,7 @@ def process_row(row):
         kt = extract_karat_info(row.get('product_name', ''))
         
         # Price extraction
-        price = extract_price(row.get('price', ''))
+        price = row.get('price', '')
         
         # Enhanced diamond weight extraction
         total_dia_wt = extract_diamond_weight(row.get('product_name', ''))

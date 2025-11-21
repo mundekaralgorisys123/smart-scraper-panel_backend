@@ -11,11 +11,11 @@ import requests
 from urllib.parse import urlparse
 from openpyxl import Workbook
 from database.db_inseartin import insert_into_db, update_product_count
-from dotenv import load_dotenv
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-load_dotenv(override=True)
+
 IMAGE_SAVE_PATH = os.getenv("IMAGE_SAVE_PATH")
 EXCEL_DATA_PATH = os.getenv("EXCEL_DATA_PATH")
 
@@ -246,33 +246,59 @@ class KayOutletParser:
         
         return "N/A"
     
+    # def _extract_price(self, soup) -> str:
+    #     """Extract price information from Kay Outlet product"""
+    #     # Current price selectors
+    #     price_selectors = [
+    #         '.price .plp-align',  # Current price
+    #         '.product-prices .price',  # Price container
+    #         '.pj-price',  # Price wrapper
+    #         '[data-di-id*="price"]',  # Data attribute
+    #         '.current-price',  # Current price alternative
+    #         '.sales-price',  # Sales price
+    #         '.groupby-red-nowprice-font'  # Kay Outlet specific price class
+    #     ]
+        
+    #     for selector in price_selectors:
+    #         price_element = soup.select_one(selector)
+    #         if price_element:
+    #             price_text = price_element.get_text(strip=True)
+    #             extracted_price = self.extract_price_value(price_text)
+    #             if extracted_price != "N/A":
+    #                 return extracted_price
+        
+    #     # Look for price in any text
+    #     price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
+    #     if price_match:
+    #         return price_match.group(0)
+        
+    #     return "N/A"
+
     def _extract_price(self, soup) -> str:
-        """Extract price information from Kay Outlet product"""
-        # Current price selectors
-        price_selectors = [
-            '.price .plp-align',  # Current price
-            '.product-prices .price',  # Price container
-            '.pj-price',  # Price wrapper
-            '[data-di-id*="price"]',  # Data attribute
-            '.current-price',  # Current price alternative
-            '.sales-price',  # Sales price
-            '.groupby-red-nowprice-font'  # Kay Outlet specific price class
-        ]
+        """Extract price, discount, and original price for Zales product"""
         
-        for selector in price_selectors:
-            price_element = soup.select_one(selector)
-            if price_element:
-                price_text = price_element.get_text(strip=True)
-                extracted_price = self.extract_price_value(price_text)
-                if extracted_price != "N/A":
-                    return extracted_price
-        
-        # Look for price in any text
-        price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
-        if price_match:
-            return price_match.group(0)
-        
-        return "N/A"
+        html_text = soup.get_text(" ", strip=True)
+
+        # --- 1) Extract sale price ---
+        sale_price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', html_text)
+        sale_price = sale_price_match.group(0) if sale_price_match else "N/A"
+
+        # --- 2) Extract discount ---
+        discount_match = re.search(r'(\d+% off)', html_text, re.IGNORECASE)
+        discount = discount_match.group(0) if discount_match else "N/A"
+
+        # --- 3) Calculate original price ---
+        original_price = "N/A"
+        if sale_price != "N/A" and discount != "N/A":
+            try:
+                discount_percent = int(re.search(r'(\d+)%', discount).group(1))
+                sale_value = float(sale_price.replace("$", "").replace(",", ""))
+                original_value = sale_value / (1 - (discount_percent / 100))
+                original_price = f"${original_value:,.2f}"
+            except:
+                original_price = "N/A"
+
+        return f"{sale_price} | {discount} | {original_price}"
     
     def _extract_image(self, soup) -> str:
         """Extract product image URL from Kay Outlet product"""
