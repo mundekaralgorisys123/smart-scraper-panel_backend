@@ -92,7 +92,7 @@ class PeoplesJewellersParser:
                     product_key = f"{product_name}_{image_url}"
                     
                     if product_key in self.processed_products:
-                        print(f"Skipping duplicate product: {product_name}")
+                        # print(f"Skipping duplicate product: {product_name}")
                         continue
                     
                     self.processed_products.add(product_key)
@@ -211,7 +211,7 @@ class PeoplesJewellersParser:
             'promotions': self._extract_promotions(soup)
         }
         
-        print(f"Extracted product data: {product_data['product_name']}, Image: {product_data['image_url']}")
+        # print(f"Extracted product data: {product_data['product_name']}, Image: {product_data['image_url']}")
         return product_data
     
     def extract_individual_products_from_html(self, html_content: str) -> List[str]:
@@ -275,29 +275,77 @@ class PeoplesJewellersParser:
         
         return "N/A"
     
+    # def _extract_price(self, soup) -> str:
+    #     """Extract price information"""
+    #     price_selectors = [
+    #         '.price .plp-align',
+    #         '.product-prices .price',
+    #         '.current-price',
+    #         '.sales-price'
+    #     ]
+        
+    #     for selector in price_selectors:
+    #         price_element = soup.select_one(selector)
+    #         if price_element:
+    #             price_text = price_element.get_text(strip=True)
+    #             extracted_price = self.extract_price_value(price_text)
+    #             if extracted_price != "N/A":
+    #                 return extracted_price
+        
+    #     # Look for price in any text
+    #     price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
+    #     if price_match:
+    #         return price_match.group(0)
+        
+    #     return "N/A"
+
     def _extract_price(self, soup) -> str:
-        """Extract price information"""
-        price_selectors = [
-            '.price .plp-align',
-            '.product-prices .price',
-            '.current-price',
-            '.sales-price'
-        ]
-        
-        for selector in price_selectors:
-            price_element = soup.select_one(selector)
-            if price_element:
-                price_text = price_element.get_text(strip=True)
-                extracted_price = self.extract_price_value(price_text)
-                if extracted_price != "N/A":
-                    return extracted_price
-        
-        # Look for price in any text
+        """Extract current, discount%, previous price"""
+
+        current_price = None
+        discount_percent = None
+        previous_price = None
+
+        # CURRENT PRICE
+        curr_el = soup.select_one('.product-prices .price .plp-align')
+        if curr_el:
+            extracted = self.extract_price_value(curr_el.get_text(strip=True))
+            if extracted != "N/A":
+                current_price = extracted
+
+        # DISCOUNT %
+        discount_el = soup.select_one('.tag-text')
+        if discount_el:
+            txt = discount_el.get_text(strip=True)
+            if txt:
+                discount_percent = txt
+
+        # PREVIOUS PRICE
+        prev_el = soup.select_one('.original-price .plp-align')
+        if prev_el:
+            extracted = self.extract_price_value(prev_el.get_text(strip=True))
+            if extracted != "N/A":
+                previous_price = extracted
+
+        # assemble in right order
+        parts = []
+        if current_price:
+            parts.append(current_price)
+        if discount_percent:
+            parts.append(discount_percent)
+        if previous_price:
+            parts.append(previous_price)
+
+        if parts:
+            return " | ".join(parts)
+
+        # fallback regex
         price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
         if price_match:
             return price_match.group(0)
-        
+
         return "N/A"
+
     
     def _extract_image(self, soup) -> str:
         """Extract product image URL from People's Jewellers product"""

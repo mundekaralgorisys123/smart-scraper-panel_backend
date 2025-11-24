@@ -197,155 +197,6 @@ class MacysParser:
             'promotions': self._extract_promotions(soup)
         }
     
-    # def extract_individual_products_from_html(self, html_content: str) -> List[str]:
-    #     """Extract individual product HTML blocks from Macy's HTML"""
-    #     if not html_content:
-    #         return []
-        
-    #     soup = BeautifulSoup(html_content, 'html.parser')
-        
-    #     # DEBUG: Print HTML structure to understand what we're working with
-    #     print("=== DEBUG HTML ANALYSIS ===")
-    #     print(f"HTML content length: {len(html_content)}")
-        
-    #     # Find all elements with common product-related attributes
-    #     all_elements_with_classes = soup.find_all(class_=True)
-    #     print(f"Total elements with classes: {len(all_elements_with_classes)}")
-        
-    #     # Show first 10 elements with their classes
-    #     for i, elem in enumerate(all_elements_with_classes[:10]):
-    #         classes = elem.get('class', [])
-    #         elem_name = elem.name
-    #         print(f"Element {i}: <{elem_name}> class='{classes}'")
-        
-    #     # Look for specific patterns that might indicate products
-    #     print("\n=== LOOKING FOR PRODUCT INDICATORS ===")
-        
-    #     # Check for images
-    #     all_images = soup.find_all('img')
-    #     print(f"Total images found: {len(all_images)}")
-    #     for img in all_images[:5]:
-    #         src = img.get('src', '')[:100] if img.get('src') else 'No src'
-    #         print(f"Image src: {src}")
-        
-    #     # Check for price-like text
-    #     price_like_text = soup.find_all(text=re.compile(r'INR|\$|\d+\.?\d{2}'))
-    #     print(f"Price-like text elements: {len(price_like_text)}")
-    #     for text in price_like_text[:5]:
-    #         print(f"Price text: {text.strip()}")
-        
-    #     # Check for product-like elements
-    #     product_like_elements = soup.find_all(class_=re.compile(r'product|item|tile|card|grid', re.IGNORECASE))
-    #     print(f"Product-like elements: {len(product_like_elements)}")
-    #     for elem in product_like_elements[:5]:
-    #         classes = elem.get('class', [])
-    #         print(f"Product-like: classes={classes}")
-        
-    #     print("=== END DEBUG ===")
-        
-    #     # Try multiple selectors in order of priority
-    #     product_selectors = [
-    #         # Most common Macy's selectors
-    #         'li[data-liindex]',  # List items with data index
-    #         '.productThumbnail',  # Product thumbnail
-    #         '.product-tile',      # Product tile
-    #         '[data-auto="product-tile"]',  # Data attribute
-    #         '.cell',              # Grid cells
-    #         '.sortablegrid-product',  # Sortable grid products
-            
-    #         # More generic selectors
-    #         'li',                 # All list items
-    #         'div[class*="product"]',  # Any div with product in class
-    #         'div[class*="item"]',     # Any div with item in class
-    #         'div[class*="tile"]',     # Any div with tile in class
-    #         'div[class*="card"]',     # Any div with card in class
-            
-    #         # Fallback: any container that might hold products
-    #         'div',
-    #         'article',
-    #         'section'
-    #     ]
-        
-    #     individual_products = []
-    #     found_with_selector = None
-        
-    #     for selector in product_selectors:
-    #         try:
-    #             elements = soup.select(selector)
-    #             print(f"Selector '{selector}' found {len(elements)} elements")
-                
-    #             if elements:
-    #                 valid_elements = []
-    #                 for element in elements:
-    #                     if self._is_valid_product_element(element):
-    #                         valid_elements.append(str(element))
-                    
-    #                 if valid_elements:
-    #                     individual_products = valid_elements
-    #                     found_with_selector = selector
-    #                     print(f"✅ Using selector '{selector}' - found {len(individual_products)} valid products")
-    #                     break
-    #                 else:
-    #                     print(f"❌ Selector '{selector}' found elements but none passed validation")
-    #         except Exception as e:
-    #             print(f"Error with selector '{selector}': {e}")
-        
-    #     # If no products found with selectors, try a more aggressive approach
-    #     if not individual_products:
-    #         print("No products found with standard selectors, trying aggressive search...")
-            
-    #         # Look for any element that contains both image and price-like text
-    #         all_elements = soup.find_all(['div', 'li', 'article', 'section'])
-    #         for element in all_elements:
-    #             element_html = str(element)
-    #             if self._is_valid_product_element(element):
-    #                 individual_products.append(element_html)
-    #                 if len(individual_products) >= 50:  # Limit for performance
-    #                     break
-            
-    #         print(f"Aggressive search found {len(individual_products)} potential products")
-        
-    #     print(f"🎯 Final result: Found {len(individual_products)} product tiles in Macy's HTML")
-    #     return individual_products
-
-    # def _is_valid_product_element(self, element) -> bool:
-    #     """Check if an element is a valid product container - more lenient version"""
-    #     try:
-    #         element_html = str(element)
-    #         soup = BeautifulSoup(element_html, 'html.parser')
-            
-    #         # Check for product indicators
-    #         has_image = bool(soup.find('img'))
-    #         has_price = bool(re.search(r'INR|\$|\d+[,.]\d{2,}', element_html, re.IGNORECASE))
-    #         has_product_like_text = bool(re.search(r'ring|necklace|bracelet|earring|diamond|gold|silver', element_html, re.IGNORECASE))
-    #         has_link = bool(soup.find('a'))
-            
-    #         # Check for specific product-related classes
-    #         classes = element.get('class', [])
-    #         class_text = ' '.join(classes) if classes else ''
-    #         has_product_class = any(keyword in class_text.lower() 
-    #                             for keyword in ['product', 'item', 'tile', 'card', 'goods', 'merch'])
-            
-    #         # More lenient criteria - consider it a product if it has multiple weak indicators
-    #         indicators = [
-    #             has_image, 
-    #             has_price,
-    #             has_product_like_text,
-    #             has_link,
-    #             has_product_class
-    #         ]
-            
-    #         score = sum(indicators)
-    #         print(f"Product validation - image:{has_image}, price:{has_price}, product_text:{has_product_like_text}, link:{has_link}, product_class:{has_product_class} = score:{score}")
-            
-    #         # Lower threshold for validation
-    #         return score >= 2 or (has_image and has_link)
-            
-    #     except Exception as e:
-    #         print(f"Error in _is_valid_product_element: {e}")
-    #         return False
-    
-
 
     def extract_individual_products_from_html(self, html_content: str) -> List[str]:
         """Extract individual product HTML blocks from Macy's HTML"""
@@ -356,30 +207,30 @@ class MacysParser:
         
         # DEBUG: Print HTML structure to understand what we're working with
         print("=== DEBUG HTML ANALYSIS ===")
-        print(f"HTML content length: {len(html_content)}")
+        # print(f"HTML content length: {len(html_content)}")
         
         # Look specifically for the structure you provided
-        print("\n=== LOOKING FOR SPECIFIC MACY'S STRUCTURE ===")
+        # print("\n=== LOOKING FOR SPECIFIC MACY'S STRUCTURE ===")
         
         # Find list items with the specific class pattern from your HTML
         list_items = soup.find_all('li', class_=re.compile(r'cell.*sortablegrid-product'))
-        print(f"Found {len(list_items)} list items with 'cell sortablegrid-product' classes")
+        # print(f"Found {len(list_items)} list items with 'cell sortablegrid-product' classes")
         
         # Find elements with data-liindex attribute (your HTML has this)
         liindex_items = soup.find_all(attrs={'data-liindex': True})
-        print(f"Found {len(liindex_items)} elements with data-liindex attribute")
+        # print(f"Found {len(liindex_items)} elements with data-liindex attribute")
         
         # Find product thumbnail containers
         thumbnail_containers = soup.find_all(class_='product-thumbnail-container')
-        print(f"Found {len(thumbnail_containers)} product-thumbnail-container elements")
+        # print(f"Found {len(thumbnail_containers)} product-thumbnail-container elements")
         
         # Find elements with product descriptions
         product_descriptions = soup.find_all(class_='product-description')
-        print(f"Found {len(product_descriptions)} product-description elements")
+        # print(f"Found {len(product_descriptions)} product-description elements")
         
         # Find pricing elements
         pricing_elements = soup.find_all(class_='pricing')
-        print(f"Found {len(pricing_elements)} pricing elements")
+        # print(f"Found {len(pricing_elements)} pricing elements")
         
         individual_products = []
         
@@ -524,38 +375,90 @@ class MacysParser:
         
         return "N/A"
     
+    # def _extract_price(self, soup) -> str:
+    #     """Extract price information from Macy's product - specialized version"""
+    #     # Method 1: Try the discount price first (most common)
+    #     discount_price = soup.select_one('.discount.is-tier2')
+    #     if discount_price:
+    #         # Get the first span inside the discount element which usually contains the price
+    #         price_span = discount_price.select_one('span')
+    #         if price_span:
+    #             price_text = price_span.get_text(strip=True)
+    #             extracted = self.extract_price_value(price_text)
+    #             if extracted != "N/A":
+    #                 return extracted
+        
+    #     # Method 2: Look for screen reader text which often contains the clean price
+    #     screen_reader = soup.select_one('.show-for-sr')
+    #     if screen_reader:
+    #         sr_text = screen_reader.get_text()
+    #         # Look for "Current price INR X,XXX.XX" pattern
+    #         current_price_match = re.search(r'Current price\s+INR\s+([\d,]+(?:\.\d{2})?)', sr_text)
+    #         if current_price_match:
+    #             return f"INR {current_price_match.group(1)}"
+        
+    #     # Method 3: Look for any element with price-like content
+    #     price_elements = soup.select('[class*="price"], [class*="Price"]')
+    #     for element in price_elements:
+    #         text = element.get_text(strip=True)
+    #         extracted = self.extract_price_value(text)
+    #         if extracted != "N/A":
+    #             return extracted
+        
+    #     # Method 4: Fallback to text search
+    #     return self.extract_price_value(soup.get_text())
+
+
+
     def _extract_price(self, soup) -> str:
-        """Extract price information from Macy's product - specialized version"""
-        # Method 1: Try the discount price first (most common)
-        discount_price = soup.select_one('.discount.is-tier2')
-        if discount_price:
-            # Get the first span inside the discount element which usually contains the price
-            price_span = discount_price.select_one('span')
-            if price_span:
-                price_text = price_span.get_text(strip=True)
-                extracted = self.extract_price_value(price_text)
-                if extracted != "N/A":
-                    return extracted
-        
-        # Method 2: Look for screen reader text which often contains the clean price
-        screen_reader = soup.select_one('.show-for-sr')
-        if screen_reader:
-            sr_text = screen_reader.get_text()
-            # Look for "Current price INR X,XXX.XX" pattern
-            current_price_match = re.search(r'Current price\s+INR\s+([\d,]+(?:\.\d{2})?)', sr_text)
-            if current_price_match:
-                return f"INR {current_price_match.group(1)}"
-        
-        # Method 3: Look for any element with price-like content
-        price_elements = soup.select('[class*="price"], [class*="Price"]')
-        for element in price_elements:
-            text = element.get_text(strip=True)
-            extracted = self.extract_price_value(text)
+        """Extract current, discount%, previous price from Macy's product"""
+
+        current_price = None
+        prev_price = None
+        discount_percent = None
+
+        # current price
+        current_el = soup.select_one('.discount.is-tier2 span')
+        if current_el:
+            extracted = self.extract_price_value(current_el.get_text(strip=True))
             if extracted != "N/A":
-                return extracted
-        
-        # Method 4: Fallback to text search
+                current_price = extracted
+
+        # discount pct ex: "(75% off)"
+        discount_el = soup.select_one('.discount.is-tier2 .sale-percent')
+        if discount_el:
+            pct = discount_el.get_text(strip=True)
+            discount_percent = pct if pct else None
+
+        # previous price
+        prev_el = soup.select_one('.price-strike-sm')
+        if prev_el:
+            extracted = self.extract_price_value(prev_el.get_text(strip=True))
+            if extracted != "N/A":
+                prev_price = extracted
+
+        # build output
+        parts = []
+        if current_price:
+            parts.append(current_price)
+        if discount_percent:
+            parts.append(discount_percent)
+        if prev_price:
+            parts.append(prev_price)
+
+        if parts:
+            return " | ".join(parts)
+
+        # fallback: screen-reader
+        sr_el = soup.select_one('.show-for-sr')
+        if sr_el:
+            return self.extract_price_value(sr_el.get_text())
+
+        # global fallback
         return self.extract_price_value(soup.get_text())
+
+    
+
     def _extract_image(self, soup) -> str:
         """Extract product image URL from Macy's product"""
         # Image selectors

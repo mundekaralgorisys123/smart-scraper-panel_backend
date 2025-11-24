@@ -90,6 +90,9 @@ class ShaneCoScraper:
                     # Generate unique ID
                     unique_id = str(uuid.uuid4())
                     product_name = parsed_data.get('product_name', 'Unknown Product')[:495]
+                    if product_name == "N/A" or not product_name or product_name.strip() == "":
+                        print(f"⏭️ Skipping product {i+1}: Invalid product name ('{product_name}')")
+                        continue
                     
                     # Download image - use sync method
                     image_url = parsed_data.get('image_url')

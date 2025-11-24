@@ -348,8 +348,8 @@ class MichaelHillParser:
             # filename = f"{unique_id}_{clean_name}_{timestamp}{file_ext}"
             # filepath_absolute = os.path.join(image_folder_absolute, filename)
             modified_url = self.make_michaelhill_image_high_quality(image_url)
-            print(f"Downloading image from: {modified_url}")
-            print(f"Saving image to: {image_full_path}")
+            # print(f"Downloading image from: {modified_url}")
+            # print(f"Saving image to: {image_full_path}")
             
             # Download image
             headers = {

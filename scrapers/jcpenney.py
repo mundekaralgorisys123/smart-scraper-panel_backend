@@ -292,31 +292,90 @@ class JCPenneyParser:
         
         return "N/A"
     
-    def _extract_price(self, soup) -> str:
-        """Extract current price from JCPenney product"""
-        # Current price selectors for JCPenney
-        price_selectors = [
-            '.DXCCO._2Bk5a.wrap',  # Current price span
-            '.sales-price .price',  # Sales price
-            '[data-automation-id="product-price"] .price',  # Price in product price container
-            '.current-price',  # Current price
-            '.gallery .price'  # Gallery price
-        ]
+    # def _extract_price(self, soup) -> str:
+    #     """Extract current price from JCPenney product"""
+    #     # Current price selectors for JCPenney
+    #     price_selectors = [
+    #         '.DXCCO._2Bk5a.wrap',  # Current price span
+    #         '.sales-price .price',  # Sales price
+    #         '[data-automation-id="product-price"] .price',  # Price in product price container
+    #         '.current-price',  # Current price
+    #         '.gallery .price'  # Gallery price
+    #     ]
         
-        for selector in price_selectors:
+    #     for selector in price_selectors:
+    #         price_element = soup.select_one(selector)
+    #         if price_element:
+    #             price_text = price_element.get_text(strip=True)
+    #             extracted_price = self.extract_price_value(price_text)
+    #             if extracted_price != "N/A":
+    #                 return extracted_price
+        
+    #     # Look for price patterns in the entire product HTML
+    #     price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
+    #     if price_match:
+    #         return price_match.group(0)
+        
+    #     return "N/A"
+
+
+    def _extract_price(self, soup) -> str:
+        """Extract current + previous price from JCPenney product"""
+
+        current_selectors = [
+            '[data-automation-id="at-price-value"]',        # current span
+            '.sales-price .price',
+            '.current-price',
+            '[data-automation-id="product-price"] .price',
+            '.DXCCO._2Bk5a.wrap',
+            '.gallery .price'
+        ]
+
+        previous_selectors = [
+            '[data-automation-id="price-old-sale"] strike',
+            '.old-price strike',
+            'strike',
+        ]
+
+        current_price = None
+        previous_price = None
+
+        # Extract current price
+        for selector in current_selectors:
             price_element = soup.select_one(selector)
             if price_element:
-                price_text = price_element.get_text(strip=True)
-                extracted_price = self.extract_price_value(price_text)
-                if extracted_price != "N/A":
-                    return extracted_price
-        
-        # Look for price patterns in the entire product HTML
+                text = price_element.get_text(strip=True)
+                val = self.extract_price_value(text)
+                if val != "N/A":
+                    current_price = val
+                    break
+
+        # Extract previous price
+        for selector in previous_selectors:
+            price_element = soup.select_one(selector)
+            if price_element:
+                text = price_element.get_text(strip=True)
+                val = self.extract_price_value(text)
+                if val != "N/A":
+                    previous_price = val
+                    break
+
+        if current_price and previous_price:
+            return f"{current_price} | {previous_price}"
+
+        if current_price:
+            return current_price
+
+        if previous_price:
+            return previous_price
+
+        # last fallback, regex scan
         price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
         if price_match:
             return price_match.group(0)
         
         return "N/A"
+
     
     def _extract_original_price(self, soup) -> str:
         """Extract original price (strikethrough) from JCPenney product"""

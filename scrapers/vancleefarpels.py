@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+import time
 import uuid
 import logging
 from datetime import datetime
@@ -86,15 +87,21 @@ class VanCleefArpelsScraper:
                 try:
                     # Parse product data
                     parsed_data = self.parse_product(product_html)
+
+                    # Get product name and skip if it's "N/A"
+                    product_name = parsed_data.get('product_name', 'Unknown Product')
+                    if product_name == "N/A" or not product_name or product_name.strip() == "":
+                        print(f"⏭️ Skipping product {i+1}: Invalid product name ('{product_name}')")
+                        continue
                     
                     # Generate unique ID
                     unique_id = str(uuid.uuid4())
                     product_name = parsed_data.get('product_name', 'Unknown Product')[:495]
                     
-                    # Download image - use sync method
+                    # Download image - FIXED: Removed timestamp parameter
                     image_url = parsed_data.get('image_url')
                     image_path = self.download_image(
-                        image_url, product_name, timestamp, image_folder, unique_id
+                        image_url, product_name, image_folder, unique_id  # Removed timestamp
                     )
                     
                     if image_path != "N/A":
@@ -422,13 +429,17 @@ class VanCleefArpelsScraper:
         """Normalize image URL for Van Cleef & Arpels"""
         if not url or url == "N/A":
             return "N/A"
+        
+        url = url.strip()
+        
         if url.startswith('http'):
             return url
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
             return f"https://www.vancleefarpels.com{url}"
-        return url
+        else:
+            return f"https://www.vancleefarpels.com{url}" if not url.startswith('http') else url
     
     def _normalize_link_url(self, url: str) -> str:
         """Normalize link URL for Van Cleef & Arpels"""
@@ -444,96 +455,79 @@ class VanCleefArpelsScraper:
 
     def modify_image_url(self, image_url):
         """
-        Get the highest quality version of Van Cleef & Arpels images.
+        Return original Van Cleef & Arpels image URL without transforms
         """
-        if not image_url or image_url == "N/A":
-            return image_url
-
-        print(f"Original image URL: {image_url}")
-        
-        # First normalize the URL to absolute format
-        normalized_url = self._normalize_image_url(image_url)
-        print(f"Normalized URL: {normalized_url}")
-        
-        # Strategy 1: Try to get the original image without any transforms
-        if '.transform.' in normalized_url:
-            # Remove everything after the original file extension including .transform
-            # Pattern: /path/to/image.jpeg.transform.vca-w350-1x.png
-            if '.jpeg.transform.' in normalized_url:
-                original_url = normalized_url.split('.jpeg.transform.')[0] + '.jpeg'
-                print(f"Strategy 1 - Original JPEG: {original_url}")
-                return original_url
-            elif '.jpg.transform.' in normalized_url:
-                original_url = normalized_url.split('.jpg.transform.')[0] + '.jpg'
-                print(f"Strategy 1 - Original JPG: {original_url}")
-                return original_url
-            elif '.png.transform.' in normalized_url:
-                original_url = normalized_url.split('.png.transform.')[0] + '.png'
-                print(f"Strategy 1 - Original PNG: {original_url}")
-                return original_url
-        
-        # Strategy 2: If we can't get the original, try to get the highest quality transform
-        if 'transform.vca-w' in normalized_url:
-            # Replace with larger size (from w350 to w1200)
-            high_quality_url = re.sub(r'transform\.vca-w\d+-\d+x', 'transform.vca-w1200-1x', normalized_url)
-            print(f"Strategy 2 - High quality: {high_quality_url}")
-            return high_quality_url
-        
-        print(f"Final - Using normalized: {normalized_url}")
-        return normalized_url
-
-    def download_image(self, image_url: str, product_name: str, timestamp: str, 
-                      image_folder: str, unique_id: str, retries: int = 3) -> str:
-        """Synchronous image download method with enhanced error handling"""
         if not image_url or image_url == "N/A":
             return "N/A"
 
-        # Clean filename
-        image_filename = f"{unique_id}_{timestamp}.jpg"
+        # print(f"Original URL: {image_url}")
+
+        # Normalize first
+        normalized_url = self._normalize_image_url(image_url)
+        # print(f"Normalized URL: {normalized_url}")
+
+        # Always remove .transform.* to get the original file
+        # This will convert: https://.../image.png.transform.vca-w350-1x.png
+        # To: https://.../image.png
+        extensions = [".png", ".jpg", ".jpeg", ".webp"]
+
+        for ext in extensions:
+            pattern = rf"({re.escape(ext)})\.transform\..*"
+            if re.search(pattern, normalized_url):
+                cleaned = re.sub(pattern, ext, normalized_url)
+                # print(f"Removed transform - Using original: {cleaned}")
+                return cleaned
+
+        # If no transform found, return normalized URL
+        print(f"No transform found - Using: {normalized_url}")
+        return normalized_url
+
+    def download_image(self, image_url: str, product_name: str, image_folder: str, unique_id: str, retries: int = 1) -> str:
+        """
+        Try alternative CDN endpoints that might not be blocked
+        """
+        if not image_url or image_url == "N/A":
+            return "N/A"
+
+        image_filename = f"{unique_id}.jpg"
         image_full_path = os.path.join(image_folder, image_filename)
+
+        # Get the original URL
+        original_url = self.modify_image_url(image_url)
         
-        # Modify the image URL to get higher quality
-        modified_url = self.modify_image_url(image_url)
-        # print(f"Downloading image for {product_name} from {modified_url}")
-        
-        for attempt in range(retries):
+        # Try different CDN endpoints
+        cdn_variations = [
+            original_url,
+            original_url.replace("www.vancleefarpels.com", "images.vancleefarpels.com"),
+            original_url.replace("www.vancleefarpels.com", "cdn.vancleefarpels.com"),
+            # Try with the transform version (smaller image might load)
+            original_url.replace(".png", ".png.transform.vca-w600-1x.png"),
+        ]
+
+        for cdn_url in cdn_variations:
             try:
-                response = requests.get(
-                    modified_url,
-                    timeout=45,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128 Safari/537.36",
-                        "Referer": "https://www.vancleefarpels.com/",
-                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Connection": "keep-alive"
-                    },
-                    allow_redirects=True,
-                    stream=True
-                )
-                response.raise_for_status()
+                logger.info(f"Trying CDN: {cdn_url}")
                 
-                # Verify it's actually an image
-                content_type = response.headers.get('content-type', '')
-                if not content_type.startswith('image/'):
-                    logger.warning(f"URL {modified_url} returned non-image content type: {content_type}")
-                    continue
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "image/*",
+                }
+
+                response = requests.get(cdn_url, headers=headers, timeout=5)
+                
+                if response.status_code == 200 and len(response.content) > 1000:
+                    with open(image_full_path, "wb") as f:
+                        f.write(response.content)
+                    logger.info(f"✅ CDN successful: {product_name}")
+                    return image_full_path
                     
-                with open(image_full_path, "wb") as f:
-                    f.write(response.content)
-                
-                logger.info(f"Successfully downloaded image for {product_name}")
-                return image_full_path
-                
-            except requests.RequestException as e:
-                logger.warning(f"Retry {attempt + 1}/{retries} - Error downloading {product_name}: {e}")
-                if attempt < retries - 1:
-                    import time
-                    time.sleep(2)
-        
-        logger.error(f"Failed to download {product_name} after {retries} attempts.")
+            except Exception as e:
+                logger.warning(f"CDN failed: {str(e)}")
+                continue
+
+        logger.info(f"⏭️ All CDNs failed, skipping: {product_name}")
         return "N/A"
-    
+
     def extract_price_value(self, text: str) -> str:
         """Extract price from text"""
         if not text:

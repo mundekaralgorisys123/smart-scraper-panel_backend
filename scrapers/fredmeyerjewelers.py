@@ -96,7 +96,7 @@ class FredMeyerJewelersParser:
                     # Download image - use sync method
                     image_url = parsed_data.get('image_url')
                     image_path = self.download_image(
-                        image_url, product_name, timestamp, image_folder, unique_id
+                        image_url, product_name, image_folder, unique_id
                     )
                     
                     if image_path != "N/A":
@@ -246,30 +246,78 @@ class FredMeyerJewelersParser:
         
         return "N/A"
     
+    # def _extract_price(self, soup) -> str:
+    #     """Extract price information from Fred Meyer Jewelers product"""
+    #     # Current price selectors
+    #     price_selectors = [
+    #         '[data-test="result-current-price"]',  # Current price
+    #         '.x-result-current-price',  # Current price class
+    #         '.x-currency',  # Currency class
+    #         '.x-font-main.x-text-[15px]'  # Price text class
+    #     ]
+        
+    #     for selector in price_selectors:
+    #         price_element = soup.select_one(selector)
+    #         if price_element:
+    #             price_text = price_element.get_text(strip=True)
+    #             extracted_price = self.extract_price_value(price_text)
+    #             if extracted_price != "N/A":
+    #                 return extracted_price
+        
+    #     # Look for price in any text
+    #     price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
+    #     if price_match:
+    #         return price_match.group(0)
+        
+    #     return "N/A"
+
+
     def _extract_price(self, soup) -> str:
-        """Extract price information from Fred Meyer Jewelers product"""
-        # Current price selectors
-        price_selectors = [
-            '[data-test="result-current-price"]',  # Current price
-            '.x-result-current-price',  # Current price class
-            '.x-currency',  # Currency class
-            '.x-font-main.x-text-[15px]'  # Price text class
+        """Extract current + previous price for Fred Meyer Jewelers"""
+
+        current_selectors = [
+            '[data-test="result-current-price"]',
+            '.x-result-current-price',
         ]
+        previous_selectors = [
+            '[data-test="result-previous-price"]',
+            '.x-result-previous-price',
+        ]
+
+        current_price = None
+        previous_price = None
         
-        for selector in price_selectors:
-            price_element = soup.select_one(selector)
-            if price_element:
-                price_text = price_element.get_text(strip=True)
-                extracted_price = self.extract_price_value(price_text)
-                if extracted_price != "N/A":
-                    return extracted_price
-        
-        # Look for price in any text
-        price_match = re.search(r'\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?', soup.get_text())
-        if price_match:
-            return price_match.group(0)
-        
+        # extract current
+        for selector in current_selectors:
+            el = soup.select_one(selector)
+            if el:
+                text = el.get_text(strip=True)
+                price = self.extract_price_value(text)
+                if price != "N/A":
+                    current_price = price
+                    break
+
+        # extract previous
+        for selector in previous_selectors:
+            el = soup.select_one(selector)
+            if el:
+                text = el.get_text(strip=True)
+                price = self.extract_price_value(text)
+                if price != "N/A":
+                    previous_price = price
+                    break
+
+        if current_price and previous_price:
+            return f"{current_price} | {previous_price}"
+
+        if current_price:
+            return current_price
+
+        if previous_price:
+            return previous_price
+
         return "N/A"
+
     
     def _extract_image(self, soup) -> str:
         """Extract product image URL from Fred Meyer Jewelers product"""
@@ -284,14 +332,27 @@ class FredMeyerJewelersParser:
         
         for selector in img_selectors:
             img_element = soup.select_one(selector)
-            if img_element and img_element.get('src'):
-                src = img_element.get('src')
-                return self._normalize_image_url(src)
-            
-            # Check for data attribute
-            if img_element and img_element.get('data-wysiwyg-image-url'):
-                src = img_element.get('data-wysiwyg-image-url')
-                return self._normalize_image_url(src)
+            if img_element:
+                # Check src first
+                if img_element.get('src'):
+                    src = img_element.get('src')
+                    normalized_url = self._normalize_image_url(src)
+                    if normalized_url != "N/A":
+                        return normalized_url
+                
+                # Check for data attribute
+                if img_element.get('data-wysiwyg-image-url'):
+                    src = img_element.get('data-wysiwyg-image-url')
+                    normalized_url = self._normalize_image_url(src)
+                    if normalized_url != "N/A":
+                        return normalized_url
+                
+                # Check for data-src (lazy loading)
+                if img_element.get('data-src'):
+                    src = img_element.get('data-src')
+                    normalized_url = self._normalize_image_url(src)
+                    if normalized_url != "N/A":
+                        return normalized_url
         
         return "N/A"
     
@@ -376,15 +437,21 @@ class FredMeyerJewelersParser:
     
     def _normalize_image_url(self, url: str) -> str:
         """Normalize image URL for Fred Meyer Jewelers"""
-        if not url:
+        if not url or url == "N/A":
             return "N/A"
+        
+        # Clean the URL
+        url = url.strip()
+        
         if url.startswith('http'):
             return url
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
             return f"https://www.fredmeyerjewelers.com{url}"
-        return url
+        else:
+            # For relative URLs without leading slash
+            return f"https://www.fredmeyerjewelers.com/{url}"
     
     def _normalize_link_url(self, url: str) -> str:
         """Normalize link URL for Fred Meyer Jewelers"""
@@ -398,36 +465,66 @@ class FredMeyerJewelersParser:
             return f"https://www.fredmeyerjewelers.com{url}"
         return url
 
-   
-
-    def download_image(image_url, product_name, timestamp, image_folder, unique_id, retries=5, timeout=30):
+    def download_image(self, image_url: str, product_name: str, image_folder: str, unique_id: str, retries: int = 2) -> str:
+        """
+        Ultra-simple image download with minimal headers and faster timeouts
+        """
         if not image_url or image_url == "N/A":
             return "N/A"
 
-        image_filename = f"{unique_id}_{timestamp}.jpg"
+        image_filename = f"{unique_id}.jpg"
         image_full_path = os.path.join(image_folder, image_filename)
-        print(f"Saving image to: {product_name}")
-        print("imageurl:", image_url)
-        print(f"Downloading image: {image_url} to {image_full_path}")
 
-        for attempt in range(1, retries + 1):
+        for attempt in range(retries):
             try:
-                headers = {"User-Agent": "Mozilla/5.0"}
-                response = requests.get(image_url, headers=headers, stream=True, timeout=timeout, allow_redirects=True)
-                response.raise_for_status()
+                logger.info(f"Download attempt {attempt + 1} for: {product_name}")
+                
+                # Minimal headers - sometimes less is more
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "image/*",
+                }
 
-                with open(image_full_path, "wb") as f:
-                    f.write(response.content)
+                # Short timeout - fail fast
+                response = requests.get(image_url, headers=headers, timeout=8)
+                
+                if response.status_code == 200:
+                    # Basic content check
+                    if len(response.content) < 1000:
+                        logger.warning("Response too small, likely not an image")
+                        continue
+                        
+                    # Save file
+                    with open(image_full_path, 'wb') as f:
+                        f.write(response.content)
+                    
+                    # Quick verification
+                    if os.path.exists(image_full_path) and os.path.getsize(image_full_path) > 1000:
+                        logger.info(f"✅ Downloaded: {product_name}")
+                        return image_full_path
+                        
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt < retries - 1:
+                    time.sleep(1)
 
-                return image_full_path
-
-            except requests.exceptions.RequestException as e:
-                logging.warning(f"Attempt {attempt}: Error downloading {image_url} - {e}")
-                time.sleep(5)
-
-        logging.error(f"Failed to download image after {retries} attempts: {image_url}")
-        return None
-
+        logger.error(f"❌ Failed: {product_name}")
+        return "N/A"
+        
+    def _clean_filename(self, filename: str) -> str:
+        """Clean filename to remove invalid characters"""
+        if not filename:
+            return "unknown"
+        # Remove invalid filename characters
+        invalid_chars = '<>:"/\\|?*'
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        # Remove multiple spaces and trim
+        filename = re.sub(r'\s+', ' ', filename).strip()
+        # Limit filename length
+        if len(filename) > 100:
+            filename = filename[:100]
+        return filename
     
     def extract_price_value(self, text: str) -> str:
         """Extract price from text"""

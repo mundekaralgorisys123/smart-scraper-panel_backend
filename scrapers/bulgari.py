@@ -11,7 +11,7 @@ from typing import Dict, Any, List
 import requests
 from urllib.parse import urlparse
 from openpyxl import Workbook
-from database_quey.db_inseartin import insert_into_db, update_product_count
+from database.db_inseartin import insert_into_db, update_product_count
 from PIL import Image
 import io
 
