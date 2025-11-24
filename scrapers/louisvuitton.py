@@ -1,7 +1,8 @@
 import asyncio
 import base64
 import os
-from random import random
+import cloudscraper
+import random
 import time
 import uuid
 import logging
@@ -10,7 +11,7 @@ from bs4 import BeautifulSoup
 import re
 from typing import Dict, Any, List
 import requests
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote, quote
 from openpyxl import Workbook
 from database.db_inseartin import insert_into_db, update_product_count
 
@@ -98,10 +99,10 @@ class LouisVuittonScraper:
                     unique_id = str(uuid.uuid4())
                     product_name = parsed_data.get('product_name', 'Unknown Product')[:495]
                     
-                    # Download image - use sync method
+                    # Download image using multiple strategies
                     image_url = parsed_data.get('image_url')
-                    image_path = self.download_image(
-                        image_url, product_name, timestamp, image_folder, unique_id
+                    image_path = self.download_image_with_fallback(
+                        image_url, product_name, image_folder, unique_id
                     )
                     
                     if image_path != "N/A":
@@ -153,6 +154,10 @@ class LouisVuittonScraper:
                     ])
                     
                     print(f"Processed product {i+1}: {product_name}")
+                    
+                    # Add delay between products to avoid rate limiting
+                    if i < len(individual_products) - 1:
+                        time.sleep(random.uniform(1, 3))
                     
                 except Exception as e:
                     print(f"Error processing product {i}: {e}")
@@ -208,7 +213,7 @@ class LouisVuittonScraper:
         return {
             'product_name': self._extract_product_name(soup),
             'price': self._extract_price(soup),
-            'image_url': self._extract_image_robust(soup),  # Use robust method
+            'image_url': self._extract_image_robust(soup),
             'link': self._extract_link(soup),
             'diamond_weight': self._extract_diamond_weight(soup),
             'gold_type': self._extract_gold_type(soup),
@@ -294,8 +299,62 @@ class LouisVuittonScraper:
         return "N/A"
     
     def _extract_image_robust(self, soup) -> str:
-        """More robust image extraction for Louis Vuitton"""
-        # Method 1: Try to find noscript fallback (often contains direct image)
+        """Extract highest resolution image from Louis Vuitton product card"""
+        # Focus on the specific div structure
+        front_view_div = soup.select_one('.lv-product-card__front-view.lv-product-picture')
+        if not front_view_div:
+            return self._extract_image_fallback(soup)
+        
+        # Priority 1: Get highest resolution from srcset (4096w when available)
+        picture = front_view_div.find('picture')
+        if picture:
+            sources = picture.find_all('source')
+            highest_res_url = None
+            max_width = 0
+            
+            for source in sources:
+                srcset = source.get('srcset')
+                if srcset:
+                    # Parse all images in srcset
+                    for img_def in srcset.split(','):
+                        img_def = img_def.strip()
+                        if img_def:
+                            parts = img_def.split()
+                            if parts and 'louisvuitton.com' in parts[0]:
+                                # Extract width
+                                width = 0
+                                if len(parts) > 1:
+                                    width_match = re.search(r'(\d+)w', parts[1])
+                                    if width_match:
+                                        width = int(width_match.group(1))
+                                
+                                # Keep track of highest resolution
+                                if width > max_width:
+                                    max_width = width
+                                    highest_res_url = parts[0]
+            
+            if highest_res_url:
+                normalized_url = self._normalize_louisvuitton_image_url(highest_res_url)
+                print(f"✅ Found highest resolution image ({max_width}w): {normalized_url}")
+                return normalized_url
+        
+        # Priority 2: Get from noscript
+        noscript = front_view_div.find('noscript')
+        if noscript:
+            noscript_img = noscript.find('img')
+            if noscript_img and noscript_img.get('src'):
+                src = noscript_img.get('src')
+                if 'louisvuitton.com' in src:
+                    normalized_url = self._normalize_louisvuitton_image_url(src)
+                    # print(f"✅ Found image via noscript: {normalized_url}")
+                    return normalized_url
+        
+        # Priority 3: Fallback
+        return self._extract_image_fallback(soup)
+    
+    def _extract_image_fallback(self, soup) -> str:
+        """Fallback image extraction methods"""
+        # Try noscript first
         noscript = soup.find('noscript')
         if noscript:
             noscript_img = noscript.find('img')
@@ -303,98 +362,31 @@ class LouisVuittonScraper:
                 src = noscript_img.get('src')
                 if 'louisvuitton.com' in src:
                     normalized_url = self._normalize_louisvuitton_image_url(src)
-                    print(f"Found image via noscript: {normalized_url}")
+                    print(f"✅ Found image via noscript fallback: {normalized_url}")
                     return normalized_url
         
-        # Method 2: Parse all picture sources
-        pictures = soup.find_all('picture')
-        for picture in pictures:
-            sources = picture.find_all('source')
-            for source in sources:
-                srcset = source.get('srcset') or source.get('data-srcset')
-                if srcset:
-                    # Get the highest resolution image from srcset
-                    images = []
-                    for img_def in srcset.split(','):
-                        img_def = img_def.strip()
-                        if img_def:
-                            parts = img_def.split()
-                            if parts and 'louisvuitton.com' in parts[0] and not parts[0].startswith('data:'):
-                                width = 0
-                                if len(parts) > 1:
-                                    width_match = re.search(r'(\d+)w', parts[1])
-                                    if width_match:
-                                        width = int(width_match.group(1))
-                                images.append((parts[0], width))
-                    
-                    if images:
-                        images.sort(key=lambda x: x[1], reverse=True)
-                        best_image_url = images[0][0]
-                        normalized_url = self._normalize_louisvuitton_image_url(best_image_url)
-                        print(f"Found image via picture source: {normalized_url}")
-                        return normalized_url
-        
-        # Method 3: Regular image extraction
-        return self._extract_image(soup)
-    
-    def _extract_image(self, soup) -> str:
-        """Extract image URL from Louis Vuitton product"""
-        # Louis Vuitton specific image selectors
+        # Try regular image extraction
         img_selectors = [
-            'img.lv-smart-picture__object',  # Smart picture object
-            '.lv-product-picture img',  # Product picture
-            '.lv-product-card__front-view img',  # Front view image
-            '.lv-mini-slider img',  # Mini slider images
-            '.lv-product-card__media img',  # Product media images
+            'img.lv-smart-picture__object',
+            '.lv-product-picture img',
+            '.lv-product-card__front-view img',
+            '.lv-product-card__media img',
         ]
         
         for selector in img_selectors:
             img_elements = soup.select(selector)
             for img_element in img_elements:
-                # Skip base64 placeholder images
                 src = img_element.get('src', '')
-                if src and src.startswith('data:image/gif;base64'):
-                    continue
-                    
-                # Try to get the highest resolution image from srcset
-                srcset = img_element.get('srcset') or img_element.get('data-srcset')
-                if srcset:
-                    # Parse srcset to get all available images
-                    image_sources = []
-                    for source in srcset.split(','):
-                        source = source.strip()
-                        if source:
-                            parts = source.split()
-                            if len(parts) >= 1:
-                                url = parts[0]
-                                if url and 'louisvuitton.com' in url and not url.startswith('data:'):
-                                    # Extract width if available to prioritize higher resolution
-                                    width = 0
-                                    if len(parts) >= 2:
-                                        width_match = re.search(r'(\d+)w', parts[1])
-                                        if width_match:
-                                            width = int(width_match.group(1))
-                                    image_sources.append((url, width))
-                    
-                    if image_sources:
-                        # Sort by width (highest first) and return the highest resolution
-                        image_sources.sort(key=lambda x: x[1], reverse=True)
-                        best_image_url = image_sources[0][0]
-                        normalized_url = self._normalize_louisvuitton_image_url(best_image_url)
-                        print(f"Found image via srcset: {normalized_url}")
-                        return normalized_url
-                
-                # Fallback to src attribute if it's not a placeholder
                 if src and 'louisvuitton.com' in src and not src.startswith('data:'):
                     normalized_url = self._normalize_louisvuitton_image_url(src)
-                    print(f"Found image via src: {normalized_url}")
+                    print(f"✅ Found image via fallback selector: {normalized_url}")
                     return normalized_url
         
-        print("No image found for product")
+        print("❌ No image found for product")
         return "N/A"
     
     def _normalize_louisvuitton_image_url(self, url: str) -> str:
-        """Normalize image URL for Louis Vuitton - enhance quality"""
+        """Normalize image URL for Louis Vuitton - try different CDN approaches"""
         if not url or url == "N/A":
             return "N/A"
         
@@ -402,16 +394,34 @@ class LouisVuittonScraper:
         if url.startswith('//'):
             url = f"https:{url}"
         elif url.startswith('/'):
-            url = f"https://in.louisvuitton.com{url}"
+            url = f"https://eu.louisvuitton.com{url}"
         
-        # Enhance image quality - get maximum resolution
-        if 'louisvuitton.com' in url and 'images/is/image' in url:
-            # Remove existing size parameters but keep the base URL
-            url = re.sub(r'\?.*$', '', url)
-            # Add parameters for highest quality
-            url += '?wid=2000&hei=2000'
+        # Fix URL encoding issues
+        if '%20' in url or '%2520' in url:
+            try:
+                # Decode any double-encoded URLs
+                decoded_path = unquote(url.split('images/is/image/lv/')[-1])
+                # Re-encode properly
+                encoded_path = quote(decoded_path, safe='')
+                url = f"https://eu.louisvuitton.com/images/is/image/lv/{encoded_path}"
+            except Exception as e:
+                print(f"URL normalization error: {e}")
+                # Fallback: simple space replacement
+                url = url.replace('%2520', '%20')
         
-        return url
+        # Remove any existing parameters and add optimal ones
+        base_url = url.split('?')[0]
+        
+        # Try different CDN parameter strategies
+        cdn_strategies = [
+            '?wid=1440&hei=1440',  # High quality
+            '?wid=800&hei=800',    # Medium quality
+            '?wid=600&hei=600',    # Lower quality
+            '?fit=constrain,1&wid=1000&hei=1000',  # Alternative CDN parameters
+        ]
+        
+        # Use high quality as default
+        return base_url + cdn_strategies[0]
     
     def _extract_link(self, soup) -> str:
         """Extract product link from Louis Vuitton product"""
@@ -442,7 +452,7 @@ class LouisVuittonScraper:
         elif url.startswith('//'):
             return f"https:{url}"
         elif url.startswith('/'):
-            return f"https://in.louisvuitton.com{url}"
+            return f"https://eu.louisvuitton.com{url}"
         return url
     
     def _extract_diamond_weight(self, soup) -> str:
@@ -510,101 +520,129 @@ class LouisVuittonScraper:
         
         return " | ".join(promotions) if promotions else "N/A"
     
-    def download_image(self, image_url: str, product_name: str, timestamp: str, 
-                      image_folder: str, unique_id: str, retries: int = 3) -> str:
-        """Synchronous image download method with enhanced error handling for Louis Vuitton"""
+    def download_image_with_fallback(self, image_url: str, product_name: str, image_folder: str, unique_id: str) -> str:
+        """
+        Try multiple download methods with fallback strategies
+        """
         if not image_url or image_url == "N/A":
             return "N/A"
-
-        # Clean filename
-        image_filename = f"{unique_id}_{timestamp}.jpg"
-        image_full_path = os.path.join(image_folder, image_filename)
         
-        print(f"Downloading image for: {product_name}")
-        print(f"Image URL: {image_url}")
+        methods = [
+            self.download_with_simple_requests,
+        ]
         
-        for attempt in range(retries):
+        for method in methods:
             try:
-                user_agents = [
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                ]
-                
-                headers = {
-                    "User-Agent": random.choice(user_agents),
-                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "Referer": "https://in.louisvuitton.com/",
-                    "Sec-Fetch-Dest": "image",
-                    "Sec-Fetch-Mode": "no-cors",
-                    "Sec-Fetch-Site": "same-origin",
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                    "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                    "Sec-Ch-Ua-Mobile": "?0",
-                    "Sec-Ch-Ua-Platform": '"Windows"'
-                }
-                
-                response = requests.get(
-                    image_url,
-                    headers=headers,
-                    timeout=30,
-                    stream=True,
-                    allow_redirects=True
-                )
-                response.raise_for_status()
-                
-                # Verify it's actually an image
-                content_type = response.headers.get('content-type', '')
-                if not content_type.startswith('image/'):
-                    logger.warning(f"URL returned non-image content type: {content_type}")
-                    if 'text/html' in content_type:
-                        logger.warning("Server returned HTML instead of image, likely blocked")
-                        continue
-                
-                # Get file size
-                content_length = response.headers.get('content-length')
-                if content_length and int(content_length) < 1000:
-                    logger.warning(f"Image too small ({content_length} bytes), likely error page")
-                    continue
-                
-                # Download the image
-                with open(image_full_path, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                
-                # Verify the downloaded file
-                file_size = os.path.getsize(image_full_path)
-                if file_size < 1000:
-                    logger.warning(f"Downloaded file too small ({file_size} bytes), deleting")
-                    os.remove(image_full_path)
-                    continue
-                
-                logger.info(f"Successfully downloaded image for {product_name} ({file_size} bytes)")
-                return image_full_path
-                
-            except requests.RequestException as e:
-                logger.warning(f"Retry {attempt + 1}/{retries} - Error downloading {product_name}: {e}")
-                if attempt < retries - 1:
-                    time.sleep(2)
+                image_path = method(image_url, product_name, image_folder, unique_id)
+                if image_path != "N/A":
+                    return image_path
             except Exception as e:
-                logger.warning(f"Retry {attempt + 1}/{retries} - Unexpected error: {e}")
-                if attempt < retries - 1:
-                    time.sleep(2)
+                logger.warning(f"Method {method.__name__} failed: {e}")
+                continue
         
-        logger.error(f"Failed to download {product_name} after {retries} attempts.")
         return "N/A"
     
+
+    def download_with_simple_requests(self, image_url: str, product_name: str, image_folder: str, unique_id: str) -> str:
+        """Simple requests approach as last resort"""
+        try:
+            image_path = os.path.join(image_folder, f"{unique_id}.jpg")
+            
+            # Very simple request
+            response = requests.get(
+                image_url,
+                timeout=30,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "image/*",
+                }
+            )
+            
+            if response.status_code == 200:
+                with open(image_path, "wb") as f:
+                    f.write(response.content)
+                
+                if os.path.exists(image_path) and os.path.getsize(image_path) > 1000:
+                    logger.info(f"[SimpleRequests] ✅ Downloaded {product_name}")
+                    return image_path
+                    
+        except Exception as e:
+            logger.warning(f"[SimpleRequests] Failed: {e}")
+        
+        return "N/A"
+    
+    def _fix_louisvuitton_url(self, url: str) -> str:
+        """Fix Louis Vuitton URL encoding and parameters"""
+        if not url or url == "N/A":
+            return "N/A"
+        
+        # Ensure proper protocol
+        if url.startswith('//'):
+            url = f"https:{url}"
+        elif url.startswith('/'):
+            url = f"https://eu.louisvuitton.com{url}"
+        
+        # Fix URL encoding issues
+        if '%20' in url or '%2520' in url:
+            try:
+                # Extract the path after /images/is/image/lv/
+                path_parts = url.split('images/is/image/lv/')
+                if len(path_parts) > 1:
+                    decoded_path = unquote(path_parts[1])
+                    # Re-encode properly
+                    encoded_path = quote(decoded_path, safe='')
+                    url = f"https://eu.louisvuitton.com/images/is/image/lv/{encoded_path}"
+            except Exception as e:
+                print(f"URL fixing error: {e}")
+                # Fallback: simple space replacement
+                url = url.replace('%2520', '%20')
+        
+        # Remove any existing query parameters and add optimal ones
+        base_url = url.split('?')[0]
+        
+        # Use high quality parameters
+        return base_url + '?wid=1440&hei=1440'
+    
+    def _get_file_extension_from_content_type(self, content_type: str) -> str:
+        """Get appropriate file extension from content type"""
+        content_type = content_type.lower()
+        
+        if 'avif' in content_type:
+            return '.avif'
+        elif 'webp' in content_type:
+            return '.webp'
+        elif 'png' in content_type:
+            return '.png'
+        elif 'jpeg' in content_type or 'jpg' in content_type:
+            return '.jpg'
+        elif 'gif' in content_type:
+            return '.gif'
+        elif 'svg' in content_type:
+            return '.svg'
+        else:
+            return '.jpg'  # Fallback
+
+    def _clean_filename(self, filename: str) -> str:
+        """Clean filename to remove invalid characters"""
+        if not filename:
+            return "unknown"
+        # Remove invalid filename characters
+        invalid_chars = '<>:"/\\|?*'
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        # Remove multiple spaces and trim
+        filename = re.sub(r'\s+', ' ', filename).strip()
+        # Limit filename length
+        if len(filename) > 100:
+            filename = filename[:100]
+        return filename
+
     def extract_price_value(self, text: str) -> str:
         """Extract price from text"""
         if not text:
             return "N/A"
         
-        # Louis Vuitton price formats: "₹14,60,000.00", "₹2,21,000.00", "$1,500.00", "€1.200,00"
+        # Louis Vuitton price formats
         price_patterns = [
             r'[₹$€]\s*\d{1,3}(?:,\d{2,3})*(?:\.\d{2})?',  # Standard format
             r'[₹$€]\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?',    # European format
@@ -615,15 +653,7 @@ class LouisVuittonScraper:
             price_match = re.search(pattern, text)
             if price_match:
                 price = price_match.group(0).replace(' ', '')
-                # Ensure proper formatting
-                if '₹' in price:
-                    return price
-                elif '$' in price:
-                    return price
-                elif '€' in price:
-                    return price
-                else:
-                    return f"₹{price}"  # Default to INR if no currency symbol
+                return price
         
         return "N/A"
     
@@ -646,8 +676,6 @@ class LouisVuittonScraper:
             r'(\d+(?:\.\d+)?)\s*ctw',
             r'(\d+(?:\.\d+)?)\s*carat',
             r'(\d+(?:\.\d+)?)\s*carats',
-            r'(\d+(?:\/\d+)?)\s*ct',
-            r'(\d+(?:\.\d+)?)\s*diamond',
         ]
         
         for pattern in weight_patterns:
