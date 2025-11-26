@@ -1,20 +1,25 @@
 from urllib.parse import urlparse
-from .bulgari import BulgariScraper
-from .chanel import ChanelScraper
-from .chaumet import ChaumetScraper
-from .fredmeyerjewelers import FredMeyerJewelersParser
-from .jcpenney import JCPenneyParser
-from .kay import KayParser
-from .kayoutlet import KayOutletParser
-from .louisvuitton import LouisVuittonScraper
-from .macys import MacysParser
-from .peoplesjewellers import PeoplesJewellersParser
-from .shaneco import ShaneCoScraper
-from .tiffany import TiffanyScraper
-from .vancleefarpels import VanCleefArpelsScraper
-from .zales import ZalesParser
-from .michaelhill import MichaelHillParser
-from .jared import JaredParser
+from scrapers.anguscoote import AngusCooteScraper
+from scrapers.fields import FieldsScraper
+from scrapers.goldmark import GoldmarkScraper
+from scrapers.hoskings import HoskingsScraper
+from scrapers.prouds import ProudsScraper
+from scrapers.bulgari import BulgariScraper
+from scrapers.chanel import ChanelScraper
+from scrapers.chaumet import ChaumetScraper
+from scrapers.fredmeyerjewelers import FredMeyerJewelersParser
+from scrapers.jcpenney import JCPenneyParser
+from scrapers.kay import KayParser
+from scrapers.kayoutlet import KayOutletParser
+from scrapers.louisvuitton import LouisVuittonScraper
+from scrapers.macys import MacysParser
+from scrapers.peoplesjewellers import PeoplesJewellersParser
+from scrapers.shaneco import ShaneCoScraper
+from scrapers.tiffany import TiffanyScraper
+from scrapers.vancleefarpels import VanCleefArpelsScraper
+from scrapers.zales import ZalesParser
+from scrapers.michaelhill import MichaelHillParser
+from scrapers.jared import JaredParser
 
 
 class ParserFactory:
@@ -75,6 +80,26 @@ class ParserFactory:
             # return BulgariScraper()  # Uncomment when BulgariScraper parser is implemented
             return LouisVuittonScraper()  # Fallback for now
         
+        elif 'www.prouds.com.au' in website_type:
+            # return ProudsScraper()  # Uncomment when ProudsScraper parser is implemented
+            return ProudsScraper()  # Fallback for now
+        
+        elif 'www.goldmark.com.au' in website_type:
+            # return GoldmarkScraper()  # Uncomment when GoldmarkScraper parser is implemented
+            return GoldmarkScraper()  # Fallback for now
+        
+        elif 'www.anguscoote.com.au' in website_type:
+            # return AngusCooteScraper()  # Uncomment when AngusCooteScraper parser is implemented
+            return AngusCooteScraper()  # Fallback for now
+        
+        elif 'www.fields.ie' in website_type:
+            # return FieldsScraper()  # Uncomment when FieldsScraper parser is implemented
+            return FieldsScraper()  # Fallback for now
+        
+        elif 'hoskings.com.au' in website_type:
+            # return HoskingsScraper()  # Uncomment when HoskingsScraper parser is implemented
+            return HoskingsScraper()  # Fallback for now
+        
         else:
             # Default to unknown  parser for unknown sites
             return 'unknown'
@@ -115,10 +140,19 @@ class ParserFactory:
             return 'www.chaumet.com'
         elif 'www.vancleefarpels.com' in domain:
             return 'www.vancleefarpels.com'
-        
         elif 'www.bulgari.com' in domain:
             return 'www.bulgari.com'
         elif 'in.louisvuitton.com' in domain:
             return 'in.louisvuitton.com'
+        elif 'www.prouds.com.au' in domain:
+            return 'www.prouds.com.au'
+        elif 'www.goldmark.com.au' in domain:
+            return 'www.goldmark.com.au'
+        elif 'www.anguscoote.com.au' in domain:
+            return 'www.anguscoote.com.au'
+        elif 'www.fields.ie' in domain:
+            return 'www.fields.ie'
+        elif 'hoskings.com.au' in domain:
+            return 'hoskings.com.au'
         else:
             return 'unknown'
